@@ -47,6 +47,7 @@ interface UserMemory {
   role: string;
   wallet_balance: number;
   total_deposited: number;
+  phone?: string;
 }
 interface TxMemory {
   id: string;
@@ -100,7 +101,8 @@ app.post("/api/user/sync", async (req, res) => {
         return res.json({
           email: profile.email,
           role: profile.role || (isAdminEmail ? "admin" : "user"),
-          walletBalance: profile.wallet_balance !== undefined ? profile.wallet_balance : 0
+          walletBalance: profile.wallet_balance !== undefined ? profile.wallet_balance : 0,
+          phone: profile.phone || ""
         });
       }
     }
@@ -114,7 +116,8 @@ app.post("/api/user/sync", async (req, res) => {
         email: emailLower,
         role: initialRole,
         wallet_balance: initialBalance,
-        total_deposited: initialBalance
+        total_deposited: initialBalance,
+        phone: ""
       };
       memoryUsers.push(memUser);
     }
@@ -122,7 +125,8 @@ app.post("/api/user/sync", async (req, res) => {
     return res.json({
       email: memUser.email,
       role: memUser.role,
-      walletBalance: memUser.wallet_balance
+      walletBalance: memUser.wallet_balance,
+      phone: memUser.phone || ""
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -148,8 +152,12 @@ function formatMpesaPhone(p: string): string {
 // PAYHERO M-PESA INTEGRATION PORTAL
 // ----------------------------------------------------
 
-const PAYHERO_BASIC_AUTH = "Basic S2dIdjh6WGV0TFg1a0dQRWlkOWs6MWdLMDZmMTF3T1VOTk01N3poZnprSVBaY254N3hlazZYNXgzanhjWg==";
-const PAYHERO_CHANNEL_ID = "4575";
+const getPayheroConfig = () => {
+  return {
+    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "Basic S2dIdjh6WGV0TFg1a0dQRWlkOWs6MWdLMDZmMTF3T1VOTk01N3poZnprSVBaY254N3hlazZYNXgzanhjWg==",
+    channelId: process.env.PAYHERO_CHANNEL_ID || "4575"
+  };
+};
 
 app.post("/api/payhero/stkpush", async (req, res) => {
   try {
@@ -158,28 +166,50 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       return res.status(400).json({ error: "Required fields missing (email, phone, amount_usd)." });
     }
 
+    const { basicAuth, channelId } = getPayheroConfig();
+
     const cleanedPhone = formatMpesaPhone(phone);
     const mpesaKES = Math.round(Number(amount_usd) * 130);
+
+    // Persist phone to Supabase profile
+    try {
+      const db = getSupabase();
+      if (db) {
+        await db.from("profiles").update({ phone: cleanedPhone }).eq("email", email.toLowerCase());
+      }
+    } catch (dbErr) {
+      console.error("Could not persistence mpesa phone in profiles:", dbErr);
+    }
+
+    const memUser = memoryUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (memUser) {
+      memUser.phone = cleanedPhone;
+    }
 
     // Encode user email state in the transaction reference key (Stateless retrieval)
     const externalRef = `${email.replace(/@/g, "_at_").replace(/\./g, "_dot_")}__${Date.now()}`;
 
-    console.log(`Sending STK push to Payhero. Recipient: ${cleanedPhone}, Value: ${mpesaKES} KES ($${amount_usd} USD)`);
+    // Dynamically retrieve URL from headers to always match active domain (dev, pre, or production)
+    const host = req.get("x-forwarded-host") || req.get("host") || "ais-dev-74szm3io5a7byanitj4v3c-209420553255.europe-west2.run.app";
+    const protocol = req.get("x-forwarded-proto") || "https";
+    const callbackUrl = `${protocol}://${host}/api/payhero/callback`;
+
+    console.log(`Sending STK push to Payhero. Recipient: ${cleanedPhone}, Value: ${mpesaKES} KES ($${amount_usd} USD), Callback: ${callbackUrl}`);
 
     const payload = {
       amount: mpesaKES,
       phone_number: cleanedPhone,
-      channel_id: parseInt(PAYHERO_CHANNEL_ID),
+      channel_id: parseInt(channelId),
       provider: "m-pesa",
       external_reference: externalRef,
-      callback_url: (process.env.APP_URL || "https://ais-dev-74szm3io5a7byanitj4v3c-209420553255.europe-west2.run.app") + "/api/payhero/callback"
+      callback_url: callbackUrl
     };
 
     const payheroResponse = await fetch("https://backend.payhero.co.ke/api/v2/payments/charge-m-pesa", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": PAYHERO_BASIC_AUTH
+        "Authorization": basicAuth
       },
       body: JSON.stringify(payload)
     });

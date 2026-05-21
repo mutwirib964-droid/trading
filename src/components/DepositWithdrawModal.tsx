@@ -5,7 +5,7 @@ import { CreditCard, Landmark, Check, Copy, ArrowUpRight, ArrowDownRight, Link, 
 interface DepositWithdrawModalProps {
   user: User;
   onClose: () => void;
-  onModifyBalance: (type: 'DEPOSIT' | 'WITHDRAWAL', amount: number, details: Omit<Transaction, 'id' | 'date' | 'status' | 'amount' | 'type'>) => void;
+  onModifyBalance: (type: 'DEPOSIT' | 'WITHDRAWAL', amount: number, details: Omit<Transaction, 'id' | 'date' | 'status' | 'amount' | 'type'> & { phone?: string }) => void;
   transactions: Transaction[];
   addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO') => void;
 }
@@ -16,7 +16,9 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [withdrawMethod, setWithdrawMethod] = useState<'MPESA' | 'CRYPTO' | 'CARD' | 'WIRE'>('MPESA');
 
   // Input states
-  const [mpesaPhone, setMpesaPhone] = useState('254700000000');
+  const [mpesaPhone, setMpesaPhone] = useState(() => {
+    return user.phone || localStorage.getItem('vfx_saved_phone') || '';
+  });
   const [mpesaAmt, setMpesaAmt] = useState('17');
   const [cryptoAsset, setCryptoAsset] = useState('USDT (TRC20)');
   const [cryptoAddress, setCryptoAddress] = useState('TXuGgY17pZpqyY7scT21Pz88DkUnm9vBKa');
@@ -28,7 +30,9 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   // Withdrawal states
   const [withdrawAmt, setWithdrawAmt] = useState('30');
   const [withdrawAddr, setWithdrawAddr] = useState('');
-  const [withdrawPhoneNum, setWithdrawPhoneNum] = useState('254700000000');
+  const [withdrawPhoneNum, setWithdrawPhoneNum] = useState(() => {
+    return user.phone || localStorage.getItem('vfx_saved_phone') || '';
+  });
 
   // Copy states
   const [copied, setCopied] = useState(false);
@@ -70,11 +74,13 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
       const data = await resp.json();
       if (resp.ok) {
+        localStorage.setItem('vfx_saved_phone', mpesaPhone);
         addToast("STK push sent! Please enter your M-Pesa PIN on your phone to complete credit.", "SUCCESS");
         // Update user screen
         onModifyBalance('DEPOSIT', usd, {
           asset: 'M-Pesa (Pending Callback)',
-          address: mpesaPhone
+          address: mpesaPhone,
+          phone: mpesaPhone
         });
       } else {
         addToast(data.error || "Failed to trigger Payhero STK Push", "ERROR");
@@ -162,9 +168,14 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       return;
     }
 
+    if (withdrawMethod === 'MPESA') {
+      localStorage.setItem('vfx_saved_phone', withdrawPhoneNum);
+    }
+
     onModifyBalance('WITHDRAWAL', amt, {
       asset: withdrawMethod === 'MPESA' ? `M-Pesa (${withdrawPhoneNum})` : `${withdrawMethod} Network`,
-      address: withdrawMethod === 'MPESA' ? withdrawPhoneNum : withdrawAddr || 'Standard Bank Destination Routing'
+      address: withdrawMethod === 'MPESA' ? withdrawPhoneNum : withdrawAddr || 'Standard Bank Destination Routing',
+      phone: withdrawMethod === 'MPESA' ? withdrawPhoneNum : undefined
     });
 
     addToast(`Withdrawal of $${amt.toLocaleString()} submitted successfully. Processing on the ledger...`, "SUCCESS");

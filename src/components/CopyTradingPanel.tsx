@@ -46,7 +46,7 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
   return (
     <div className="space-y-4 text-[11px]">
       {/* Narrative Intro Pitch */}
-      <div className="bg-gradient-to-r from-[#121c2c] to-[#0c111c] border border-gray-800 rounded-lg p-3.5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="vfx-gradient-card border border-gray-800 rounded-lg p-3.5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono uppercase font-extrabold tracking-wide">
             <Sparkles className="w-3 h-3" /> Elite Copier Program

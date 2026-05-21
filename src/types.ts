@@ -30,6 +30,7 @@ export interface User {
   role?: 'user' | 'marketer' | 'admin';
   kycUploadedAt?: string;
   id?: string; // supabase user uuid
+  phone?: string;
 }
 
 export interface Position {

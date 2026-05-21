@@ -84,6 +84,13 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    }
     localStorage.setItem('vfx_theme', theme);
   }, [theme]);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -170,16 +177,32 @@ export default function App() {
       }
     }
     if (savedTransactions) {
-      setTransactions(JSON.parse(savedTransactions));
+      try {
+        setTransactions(JSON.parse(savedTransactions));
+      } catch (err) {
+        console.error("Failed to parse saved transactions", err);
+      }
     }
     if (savedTickets) {
-      setSupportTickets(JSON.parse(savedTickets));
+      try {
+        setSupportTickets(JSON.parse(savedTickets));
+      } catch (err) {
+        console.error("Failed to parse saved tickets", err);
+      }
     }
     if (savedCopiedAlloc) {
-      setCopiedTraderAllocations(JSON.parse(savedCopiedAlloc));
+      try {
+        setCopiedTraderAllocations(JSON.parse(savedCopiedAlloc));
+      } catch (err) {
+        console.error("Failed to parse saved copied allocations", err);
+      }
     }
     if (savedStakingSub) {
-      setActiveStakingSubscriptions(JSON.parse(savedStakingSub));
+      try {
+        setActiveStakingSubscriptions(JSON.parse(savedStakingSub));
+      } catch (err) {
+        console.error("Failed to parse saved staking subscriptions", err);
+      }
     }
   }, []);
 
@@ -381,7 +404,8 @@ export default function App() {
         setUser(prev => ({
           ...prev,
           walletBalance: synced.walletBalance,
-          role: synced.role
+          role: synced.role,
+          phone: synced.phone || prev.phone || ""
         }));
       }
     } catch (e) {
@@ -418,7 +442,8 @@ export default function App() {
           accountMode: 'REAL',
           demoBalance: 10000,
           demoPositions: [],
-          demoProfits: 0
+          demoProfits: 0,
+          phone: synced.phone || ""
         };
 
         const setupTx: Transaction[] = synced.walletBalance > 0 ? [
@@ -760,11 +785,13 @@ export default function App() {
     if (user.accountMode === 'DEMO') {
       updatedUser = {
         ...user,
+        phone: details.phone || user.phone || "",
         demoBalance: Number(((user.demoBalance ?? 10000) + amount * multiplier).toFixed(2))
       };
     } else {
       updatedUser = {
         ...user,
+        phone: details.phone || user.phone || "",
         walletBalance: Number((user.walletBalance + amount * multiplier).toFixed(2))
       };
     }
@@ -1151,7 +1178,7 @@ export default function App() {
             {/* SUBPAGE 5: AI TRADING ADVISOR CORE CHAT */}
             {activeTab === 'AI_ADVISOR' && (
               <div className="max-w-3xl mx-auto space-y-4">
-                <div className="bg-gradient-to-tr from-[#121c2c] to-[#0c111c] border border-gray-800 rounded-xl p-5 shadow-xl space-y-1 text-center">
+                <div className="vfx-gradient-card border border-gray-800 rounded-xl p-5 shadow-xl space-y-1 text-center">
                   <h2 className="text-white text-lg font-bold font-sans uppercase flex justify-center items-center gap-2">
                     <Bot className="w-5 h-5 text-emerald-400 animate-pulse" />
                     Dedicated Institutional Market Intelligence Advisor
@@ -1257,7 +1284,7 @@ export default function App() {
               {/* Grid of 8 key currency pairs */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {assets.slice(0, 8).map((a) => (
-                  <div key={a.id} className="bg-[#0b0f19]/40 border border-gray-950 hover:border-emerald-500/20 bg-gradient-to-b from-[#0e1424]/20 to-transparent rounded-lg p-3.5 shadow-xl font-mono text-xs flex flex-col justify-between hover:-translate-y-0.5 transition-all duration-300">
+                  <div key={a.id} className="bg-[#0b0f19]/40 border border-gray-950 hover:border-emerald-500/20 rounded-lg p-3.5 shadow-xl font-mono text-xs flex flex-col justify-between hover:-translate-y-0.5 transition-all duration-300">
                     <div className="flex justify-between items-start mb-2.5">
                       <div>
                         <span className="text-white font-bold block tracking-wider">{a.symbol}</span>
@@ -1411,7 +1438,7 @@ export default function App() {
             </button>
 
             <form onSubmit={handleAuthSubmit} className="space-y-4.5">
-              <div className="text-center space-y-1 bg-gradient-to-r from-[#0e1424] to-[#050810] py-4 rounded border border-gray-950/80 mb-1 select-none">
+              <div className="text-center space-y-1 bg-gradient-to-r from-gray-950 to-gray-900 py-4 rounded border border-gray-950 mb-1 select-none">
                 <span className="text-[8px] font-mono text-emerald-400 font-bold uppercase tracking-widest flex items-center justify-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> SECURE TRADING WEBPORTAL
                 </span>

@@ -9,9 +9,12 @@
 create extension if not exists "uuid-ossp";
 
 -- 2. CREATE PROFILES TABLE
+alter table public.profiles add column if not exists phone varchar;
+
 create table if not exists public.profiles (
     email varchar primary key,
     name varchar not null,
+    phone varchar,
     role varchar not null default 'user' check (role in ('user', 'marketer', 'admin')),
     wallet_balance numeric(18, 4) not null default 0.0000, -- starts at 0 for real account
     invested_capital numeric(18, 4) not null default 0.0000,
@@ -90,11 +93,13 @@ $$ language plpgsql security definer;
 -- --- PROFILES POLICIES ---
 
 -- Allow everyone to check/register their initial profile row
+drop policy if exists "Allow profile insertion during registration" on public.profiles;
 create policy "Allow profile insertion during registration"
 on public.profiles for insert
 with check (true);
 
 -- Users can read their own profile; admins can read any profile
+drop policy if exists "Allow read for self or administrator" on public.profiles;
 create policy "Allow read for self or administrator"
 on public.profiles for select
 using (
@@ -104,6 +109,7 @@ using (
 
 -- Users can update non-critical aspects of their profile (like kyc updates or demo balances); 
 -- Admin can update anything (balances, roles, verification states)
+drop policy if exists "Allow update for self or administrator" on public.profiles;
 create policy "Allow update for self or administrator"
 on public.profiles for update
 using (
@@ -118,6 +124,7 @@ with check (
 -- --- TRANSACTIONS POLICIES ---
 
 -- Allow users to create transaction requests
+drop policy if exists "Allow users to submit transactions" on public.transactions;
 create policy "Allow users to submit transactions"
 on public.transactions for insert
 with check (
@@ -126,6 +133,7 @@ with check (
 );
 
 -- Users can read their own transactions ledger; administrators can read all
+drop policy if exists "Allow transaction reading for self or administrator" on public.transactions;
 create policy "Allow transaction reading for self or administrator"
 on public.transactions for select
 using (
@@ -134,6 +142,7 @@ using (
 );
 
 -- Only Administrators can alter or delete transaction records (to secure bookkeeping logs)
+drop policy if exists "Allow transactions update for administrator only" on public.transactions;
 create policy "Allow transactions update for administrator only"
 on public.transactions for update
 using (public.is_admin(auth.jwt() ->> 'email'))
@@ -142,6 +151,7 @@ with check (public.is_admin(auth.jwt() ->> 'email'));
 -- --- TRADES POLICIES ---
 
 -- Allow users to open trades
+drop policy if exists "Allow trade insertion" on public.trades;
 create policy "Allow trade insertion"
 on public.trades for insert
 with check (
@@ -150,6 +160,7 @@ with check (
 );
 
 -- Users can read their own trades; administrators can read all
+drop policy if exists "Allow trade read for self or administrator" on public.trades;
 create policy "Allow trade read for self or administrator"
 on public.trades for select
 using (
@@ -158,6 +169,7 @@ using (
 );
 
 -- Users can close their own trades (update state); administrators can modify any trade parameters
+drop policy if exists "Allow trade updates for self or administrator" on public.trades;
 create policy "Allow trade updates for self or administrator"
 on public.trades for update
 using (

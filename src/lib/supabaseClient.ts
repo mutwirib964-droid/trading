@@ -1,7 +1,8 @@
+/// <reference types="vite/client" />
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 
@@ -27,6 +28,7 @@ export async function dbSyncUser(user: any) {
         email: user.email.toLowerCase(),
         name: user.name,
         role: user.role || "user",
+        phone: user.phone || null,
         wallet_balance: user.walletBalance,
         invested_capital: user.investedCapital,
         profits: user.profits,

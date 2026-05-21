@@ -15,7 +15,7 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
       {/* Capital Dashboard Card */}
-      <div className="bg-gradient-to-br from-[#121c2c] to-[#0b0f19] border border-gray-800 rounded-lg p-3.5 shadow-xl relative overflow-hidden group">
+      <div className="vfx-gradient-card border border-gray-800 rounded-lg p-3.5 shadow-xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl group-hover:bg-emerald-500/10 transition-all duration-500" />
         
         <div className="flex items-center justify-between mb-2.5">
