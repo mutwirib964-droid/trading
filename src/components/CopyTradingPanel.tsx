@@ -26,6 +26,10 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
 
     const amount = parseFloat(allocationAmt) || 0;
     if (amount <= 0) return;
+    if (amount < 20) {
+      alert("Minimum allocation amount is $20.");
+      return;
+    }
     if (amount > user.walletBalance) {
       alert("Insufficient liquidity in active trading balance.");
       return;
@@ -225,13 +229,13 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
                       value={allocationAmt}
                       onChange={(e) => setAllocationAmt(e.target.value)}
                       className="w-full bg-transparent text-white text-sm font-bold pl-5 focus:outline-none placeholder-gray-600"
-                      min="50"
+                      min="20"
                       required
                     />
                     <span className="absolute right-3.5 text-gray-600 font-mono text-[10px]">USD</span>
                   </div>
-                  <p className="text-[10px] text-gray-500 font-mono leading-relaxed">
-                    *The allocated principal is securely held under priority copy-contract locks and mirrors automated execution indexes. Minimum stake size starts at $50.
+                  <p className="text-[10px] text-gray-500 font-mono leading-relaxed font-sans">
+                    *The allocated principal is securely held under priority copy-contract locks. Minimum copying allocation requires at least $20.
                   </p>
                 </div>
 

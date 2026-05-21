@@ -65,6 +65,70 @@ const memoryUsers: UserMemory[] = [
 ];
 const memoryTransactions: TxMemory[] = [];
 
+// Dynamic sync endpoint
+app.post("/api/user/sync", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required to sync account." });
+    }
+
+    const emailLower = email.toLowerCase();
+    const isAdminEmail = emailLower === "mutwirib964@gmail.com";
+
+    const db = getSupabase();
+    if (db) {
+      let { data: profile } = await db.from("profiles").select("*").eq("email", emailLower).maybeSingle();
+      
+      if (!profile) {
+        const initialRole = isAdminEmail ? "admin" : "user";
+        const initialBalance = isAdminEmail ? 1000 : 0;
+        
+        const { data: newProfile } = await db.from("profiles").insert({
+          email: emailLower,
+          role: initialRole,
+          wallet_balance: initialBalance,
+          total_deposited: initialBalance
+        }).select().single();
+
+        if (newProfile) {
+          profile = newProfile;
+        }
+      }
+
+      if (profile) {
+        return res.json({
+          email: profile.email,
+          role: profile.role || (isAdminEmail ? "admin" : "user"),
+          walletBalance: profile.wallet_balance !== undefined ? profile.wallet_balance : 0
+        });
+      }
+    }
+
+    let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+    if (!memUser) {
+      const initialRole = isAdminEmail ? "admin" : "user";
+      const initialBalance = isAdminEmail ? 1000 : 0;
+      memUser = {
+        id: `user-mem-${Date.now()}`,
+        email: emailLower,
+        role: initialRole,
+        wallet_balance: initialBalance,
+        total_deposited: initialBalance
+      };
+      memoryUsers.push(memUser);
+    }
+
+    return res.json({
+      email: memUser.email,
+      role: memUser.role,
+      walletBalance: memUser.wallet_balance
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Clean safaricom phone formatting rules
 function formatMpesaPhone(p: string): string {
   let cleaned = p.replace(/\D/g, ""); // keep only digits
@@ -130,7 +194,10 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       parsedBody = { raw: bodyText };
     }
 
-    if (payheroResponse.status >= 200 && payheroResponse.status < 300) {
+    const isOk = payheroResponse.status >= 200 && payheroResponse.status < 300;
+    const isSuccess = isOk && parsedBody.success !== false && parsedBody.success !== "false" && parsedBody.status !== "Failed" && !parsedBody.error;
+
+    if (isSuccess) {
       // Create pending transactions locally log
       memoryTransactions.push({
         id: `tx-fin-${Date.now()}`,
@@ -145,7 +212,8 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 
       return res.json({ success: true, reference: externalRef, payload: parsedBody });
     } else {
-      return res.status(400).json({ error: parsedBody.message || "Failed to trigger Payhero payment gateway", details: parsedBody });
+      const errMsg = parsedBody.message || parsedBody.error || "M-Pesa STK push request rejected by Payhero API provider";
+      return res.status(400).json({ error: errMsg, details: parsedBody });
     }
 
   } catch (error: any) {

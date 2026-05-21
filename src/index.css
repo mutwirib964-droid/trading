@@ -83,7 +83,22 @@ html[data-theme="light"] {
 body {
   font-family: var(--font-sans);
   background-color: var(--color-bg-main);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure ultra clear high-contrast text visibility, no faded look across any theme */
+.text-gray-400, .text-slate-400, .text-gray-500, .text-slate-500 {
+  color: var(--color-text-secondary) !important;
+  font-weight: 500 !important;
+}
+.text-gray-300, .text-slate-300 {
+  color: var(--color-text-primary) !important;
+  font-weight: 500 !important;
+}
+.text-gray-600, .text-slate-605 {
+  color: var(--color-text-muted) !important;
 }
 input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 0 10px #00C087;

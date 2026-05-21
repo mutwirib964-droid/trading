@@ -63,6 +63,12 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
   const handlePlaceOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (totalMargin <= 0) return;
+
+    if (user.accountMode === 'REAL' && totalMargin < 10) {
+      alert("The minimum manual trade stake is $10 for Real accounts.");
+      return;
+    }
+
     if (totalMargin > user.walletBalance) {
       alert("Insufficient wallet balance for this margin commitment.");
       return;

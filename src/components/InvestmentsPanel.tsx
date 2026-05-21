@@ -41,6 +41,10 @@ export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStakin
       alert(`Minimum deposit requirement for this premium contract is $${subscribingPlan.minDeposit}.`);
       return;
     }
+    if (subscribingPlan.maxDeposit && amount > subscribingPlan.maxDeposit) {
+      alert(`Maximum deposit restriction for this contract is $${subscribingPlan.maxDeposit}.`);
+      return;
+    }
     if (amount > user.walletBalance) {
       alert("Insufficient available liquid funds to complete this subscription.");
       return;

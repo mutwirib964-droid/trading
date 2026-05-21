@@ -67,15 +67,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
 
   // Generate initial simulated candles based on active asset price and continuous model
   useEffect(() => {
-    // Generate simple seed based on asset id string hash combined with a randomized session offset 
-    // to ensure the charts appear completely distinct and non-matching across logins and sessions
-    const sessionOffsetKey = `vfx_chart_seed_offset_${activeAsset.id}`;
-    let offsetStr = sessionStorage.getItem(sessionOffsetKey);
-    if (!offsetStr) {
-      offsetStr = String(Math.floor(Math.random() * 500) + 1);
-      sessionStorage.setItem(sessionOffsetKey, offsetStr);
-    }
-    const offsetVal = parseInt(offsetStr) || 123;
+    // Generate a completely randomized offset to ensure charts appear completely unique across logins
+    const offsetVal = Math.floor(Math.random() * 20000) + 1;
     const hash = (activeAsset.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 10) + offsetVal) % 400 + 10;
     phaseSeedRef.current = hash;
     tickCounterRef.current = 0; // Reset live ticks progress counter

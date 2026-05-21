@@ -14,24 +14,23 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
   const [docType, setDocType] = useState('PASSPORT');
   const [kycSuccess, setKycSuccess] = useState(false);
   const [activeTicket, setActiveTicket] = useState<SupportTicket | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   // Form states
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
   const [replyText, setReplyText] = useState('');
 
-  const [activeKycStatus, setActiveKycStatus] = useState<'unverified' | 'pending' | 'verified'>(user.isKycVerified);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleKycSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setActiveKycStatus('pending');
+    if (!selectedFileName) {
+      alert("Please select or drop an identification document (PDF or Image).");
+      return;
+    }
     onUpdateKyc('pending', docType);
     setKycSuccess(true);
-    setTimeout(() => {
-      setActiveKycStatus('verified');
-      onUpdateKyc('verified', docType);
-      alert("Compliance Review Complete: Your KYC credentials have been approved! Live institutional deposit and margin tier ceilings have been unlocked completely.");
-    }, 5000);
   };
 
   const handleCreateTicket = (e: React.FormEvent) => {
@@ -67,13 +66,13 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
             <div className="flex justify-between items-center">
               <span>Verification Status:</span>
               <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold uppercase ${
-                activeKycStatus === 'verified'
+                user.isKycVerified === 'verified'
                   ? 'bg-emerald-500/15 text-emerald-400'
-                  : activeKycStatus === 'pending'
+                  : user.isKycVerified === 'pending'
                   ? 'bg-amber-500/15 text-amber-400'
                   : 'bg-rose-500/15 text-rose-400'
               }`}>
-                {activeKycStatus}
+                {user.isKycVerified}
               </span>
             </div>
             
@@ -84,53 +83,80 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
             </div>
           </div>
 
-          {activeKycStatus === 'unverified' && (
+          {user.isKycVerified === 'unverified' && (
             <form onSubmit={handleKycSubmit} className="space-y-2.5 font-bold">
               <div className="space-y-1">
                 <span className="text-gray-500 text-[8.5px] uppercase">DOCUMENTS IDENTITY TYPE</span>
                 <select
                   value={docType}
                   onChange={(e) => setDocType(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-800 text-white rounded py-1.5 px-2 text-[10.5px] focus:outline-none focus:border-emerald-500/30"
+                  className="w-full bg-gray-950 border border-gray-800 text-white rounded py-1.5 px-2 text-[10.5px] focus:outline-none focus:border-emerald-500/30 font-semibold"
                 >
-                  <option value="PASSPORT">Passport Ledger</option>
-                  <option value="ID_CARD">National ID Card</option>
+                  <option value="PASSPORT">Passport Ledger File</option>
+                  <option value="ID_CARD">National ID Card (Front/Back)</option>
                   <option value="DRIVERS_LICENSE">Driver's License ID</option>
                 </select>
               </div>
 
               <div className="space-y-1">
-                <span className="text-gray-500 text-[8.5px] uppercase">UPLOAD IDENTIFICATION FILE</span>
-                <div className="border border-dashed border-gray-800 hover:border-emerald-500/35 rounded p-3 text-center text-[10px] font-mono text-gray-500 bg-gray-950/20 hover:bg-gray-950/40 transition-all cursor-pointer">
-                  Drag & Drop file copy or click here
-                  <p className="text-[7.5px] text-gray-600 mt-0.5">PDF, JPG, PNG accepted. Max 5MB size.</p>
+                <span className="text-gray-500 text-[8.5px] uppercase">UPLOAD IDENTIFICATION FILE (PDF)</span>
+                
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".pdf,image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setSelectedFileName(file.name);
+                  }}
+                  required
+                />
+
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border border-dashed border-gray-800 hover:border-emerald-505/35 hover:border-emerald-500 rounded p-4 text-center text-[10px] font-mono text-gray-500 bg-gray-950/20 hover:bg-gray-950/40 transition-all cursor-pointer select-none"
+                >
+                  <FileText className="w-5 h-5 mx-auto text-gray-650 mb-1" />
+                  {selectedFileName ? (
+                    <span className="text-emerald-400 font-bold font-mono text-[9px] block truncate">{selectedFileName}</span>
+                  ) : (
+                    <>
+                      Drag & Drop file copy or click here
+                      <p className="text-[7.5px] text-gray-600 mt-1">PDF, JPG, PNG accepted. Max 5MB size.</p>
+                    </>
+                  )}
                 </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-400 text-[#0b0f19] font-bold text-[10px] uppercase tracking-wide rounded transition-all cursor-pointer"
+                className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b0f19] font-bold text-[10px] uppercase tracking-wide rounded transition-all cursor-pointer border-none shadow-md shadow-emerald-500/10"
               >
                 SUBMIT IDENTITY ENVELOPE
               </button>
             </form>
           )}
 
-          {activeKycStatus === 'pending' && (
-            <div className="bg-amber-950/10 border border-amber-950 rounded p-3 flex items-start gap-2 text-amber-500 text-[9.5px]">
-              <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
-              <span>Reviewing records. Compliance matching requires around 5 seconds. Vault assets remain secured.</span>
+          {user.isKycVerified === 'pending' && (
+            <div className="bg-amber-950/10 border border-amber-950/30 rounded p-4 flex flex-col gap-2 text-amber-500 text-[10px] font-mono leading-relaxed">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
+                <span className="font-extrabold uppercase font-sans">Verification Processing...</span>
+              </div>
+              <p className="text-[9.5px]">Auto verifying compliance algorithms. Approval settles in 30 seconds. Do not reload.</p>
             </div>
           )}
 
-          {activeKycStatus === 'verified' && (
-            <div className="bg-emerald-950/10 border border-emerald-950 rounded p-3 space-y-2 text-emerald-400 text-[9.5px] font-mono">
+          {user.isKycVerified === 'verified' && (
+            <div className="bg-emerald-950/15 border border-emerald-500/30 rounded p-4 space-y-2.5 text-emerald-400 text-[10px] font-mono">
               <div className="flex gap-2">
-                <CheckCircle2 className="w-4.5 h-4.5 shrink-0" />
-                <span>Identity parameters verified! Large institutional deposit levels and maximum index margins are fully activated.</span>
+                <CheckCircle2 className="w-4.5 h-4.5 shrink-0 text-emerald-400" />
+                <span className="font-sans font-bold uppercase">Identity Verified</span>
               </div>
-              <div className="border-t border-emerald-950/30 pt-1.5 text-[8px] text-emerald-500">
-                Approved KYC Reference: VEX-MTR-924-814-118
+              <p className="text-[9.5px] leading-relaxed">Compliance review completed. Large deposit volumes and maximum index margins are fully activated.</p>
+              <div className="border-t border-emerald-950/50 pt-1.5 text-[8.5px] text-emerald-500 font-bold">
+                KYC Reference: VEX-MTR-924-814-118
               </div>
             </div>
           )}
