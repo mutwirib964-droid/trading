@@ -1,0 +1,6 @@
+{
+  "name": "VexcoinFX Elite",
+  "description": "Professional full-stack trade execution and cryptocurrency asset management terminal with advanced analytics and AI-powered advisorship.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
