@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Asset, User, Position, Transaction, CopyTrader, StakingPlan, SupportTicket } from './types';
 import { 
   INITIAL_ASSETS, 
@@ -15,6 +15,7 @@ import CopyTradingPanel from './components/CopyTradingPanel';
 import InvestmentsPanel from './components/InvestmentsPanel';
 import DepositWithdrawModal from './components/DepositWithdrawModal';
 import SupportPortal from './components/SupportPortal';
+import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 
 import { 
   ShieldCheck, 
@@ -235,47 +236,32 @@ export default function App() {
     }
   };
 
-  // Live accruals / Position price tracking fluctuations
+  // Maintain reference values of states that change to avoid resetting the background intervals
+  const userRef = useRef(user);
+  const copiedTraderAllocationsRef = useRef(copiedTraderAllocations);
+  const activeStakingSubscriptionsRef = useRef(activeStakingSubscriptions);
+  const transactionsRef = useRef(transactions);
+  const supportTicketsRef = useRef(supportTickets);
+
+  useEffect(() => {
+    userRef.current = user;
+    copiedTraderAllocationsRef.current = copiedTraderAllocations;
+    activeStakingSubscriptionsRef.current = activeStakingSubscriptions;
+    transactionsRef.current = transactions;
+    supportTicketsRef.current = supportTickets;
+  }, [user, copiedTraderAllocations, activeStakingSubscriptions, transactions, supportTickets]);
+
+  // Live accruals background timer (running with an empty dependency list so it never resets prematurely)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!user.loggedIn) return;
+      const currentUser = userRef.current;
+      if (!currentUser.loggedIn) return;
 
-      // 1. Simulate running price updates for positions PnL matching
       let isUpdated = false;
-      const updatedPositions = user.activePositions.map((p) => {
-        const liveAsset = assets.find((a) => a.symbol === p.assetSymbol);
-        if (!liveAsset) return p;
 
-        isUpdated = true;
-        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, user.role || 'user', liveAsset.price);
-
-        return {
-          ...p,
-          currentPrice,
-          pnl
-        };
-      });
-
-      const updatedDemoPositions = (user.demoPositions || []).map((p) => {
-        const liveAsset = assets.find((a) => a.symbol === p.assetSymbol);
-        if (!liveAsset) return p;
-
-        isUpdated = true;
-        const priceDiff = liveAsset.price - p.entryPrice;
-        const multiplier = p.type === 'BUY' ? 1 : -1;
-        const percentageMove = priceDiff / p.entryPrice;
-        const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
-
-        return {
-          ...p,
-          currentPrice: liveAsset.price,
-          pnl: Number(rawPnl.toFixed(2))
-        };
-      });
-
-      // 2. Mock accrue returns on Copy trading
+      // 1. Mock accrue returns on Copy trading
       let copyAccruedInterest = 0;
-      const updatedCopiedAllocations = { ...copiedTraderAllocations };
+      const updatedCopiedAllocations = { ...copiedTraderAllocationsRef.current };
       Object.keys(updatedCopiedAllocations).forEach((key) => {
         if (updatedCopiedAllocations[key] > 0) {
           isUpdated = true;
@@ -287,9 +273,8 @@ export default function App() {
         }
       });
 
-      // 3. Mock accrue returns on active Stakings
-      let stakingAccruedInterest = 0;
-      const updatedStakingSubs = activeStakingSubscriptions.map((stk) => {
+      // 2. Mock accrue returns on active Stakings
+      const updatedStakingSubs = activeStakingSubscriptionsRef.current.map((stk) => {
         isUpdated = true;
         const returnRate = 0.00005 + Math.random() * 0.0001; // accrues marginally
         const increment = stk.amount * returnRate;
@@ -299,10 +284,10 @@ export default function App() {
         };
       });
 
-      // 4. Handle auto-verifying pending KYC status
+      // 3. Handle auto-verifying pending KYC status
       let kycAutoApproved = false;
-      if (user.isKycVerified === 'pending' && user.kycUploadedAt) {
-        const uploadedTime = new Date(user.kycUploadedAt).getTime();
+      if (currentUser.isKycVerified === 'pending' && currentUser.kycUploadedAt) {
+        const uploadedTime = new Date(currentUser.kycUploadedAt).getTime();
         const elapsedMs = Date.now() - uploadedTime;
         // Verify in exactly 30 seconds for quick visual verification (so the user gets instant feedback)
         if (elapsedMs >= 30000) {
@@ -314,35 +299,31 @@ export default function App() {
       if (isUpdated) {
         let updatedUser: User;
         
-        const revisedWallet = user.walletBalance + copyAccruedInterest;
-        const revisedProfits = user.profits + copyAccruedInterest;
+        const revisedWallet = currentUser.walletBalance + copyAccruedInterest;
+        const revisedProfits = currentUser.profits + copyAccruedInterest;
 
-        const revisedDemoBalance = (user.demoBalance ?? 10000) + copyAccruedInterest;
-        const revisedDemoProfits = (user.demoProfits ?? 0) + copyAccruedInterest;
+        const revisedDemoBalance = (currentUser.demoBalance ?? 10000) + copyAccruedInterest;
+        const revisedDemoProfits = (currentUser.demoProfits ?? 0) + copyAccruedInterest;
 
         let revisedCopyAllocated = 0;
         Object.keys(updatedCopiedAllocations).forEach((k) => {
           revisedCopyAllocated += updatedCopiedAllocations[k];
         });
 
-        if (user.accountMode === 'DEMO') {
+        if (currentUser.accountMode === 'DEMO') {
           updatedUser = {
-            ...user,
-            isKycVerified: kycAutoApproved ? 'verified' : user.isKycVerified,
+            ...currentUser,
+            isKycVerified: kycAutoApproved ? 'verified' : currentUser.isKycVerified,
             demoBalance: Number(revisedDemoBalance.toFixed(2)),
             demoProfits: Number(revisedDemoProfits.toFixed(2)),
-            activePositions: updatedPositions,
-            demoPositions: updatedDemoPositions,
             copyTradingAllocated: Number(revisedCopyAllocated.toFixed(2))
           };
         } else {
           updatedUser = {
-            ...user,
-            isKycVerified: kycAutoApproved ? 'verified' : user.isKycVerified,
+            ...currentUser,
+            isKycVerified: kycAutoApproved ? 'verified' : currentUser.isKycVerified,
             walletBalance: Number(revisedWallet.toFixed(2)),
             profits: Number(revisedProfits.toFixed(2)),
-            activePositions: updatedPositions,
-            demoPositions: updatedDemoPositions,
             copyTradingAllocated: Number(revisedCopyAllocated.toFixed(2))
           };
         }
@@ -353,8 +334,8 @@ export default function App() {
 
         persistState(
           updatedUser,
-          transactions,
-          supportTickets,
+          transactionsRef.current,
+          supportTicketsRef.current,
           updatedCopiedAllocations,
           updatedStakingSubs
         );
@@ -363,15 +344,19 @@ export default function App() {
     }, 4500);
 
     return () => clearInterval(interval);
-  }, [user, assets, transactions, supportTickets, copiedTraderAllocations, activeStakingSubscriptions]);
+  }, []);
 
   // Synchronize dynamic updates back from TradingViewChart ticker
-  const handlePriceTick = useCallback((newPrice: number) => {
+  const handlePriceTick = useCallback((assetId: string, newPrice: number) => {
+    // 1. Resolve our asset symbol using static initial assets map
+    const resolvedSymbol = INITIAL_ASSETS.find((a) => a.id === assetId)?.symbol || "";
+
+    // 2. Update assets list with the latest flowing tick prices
     setAssets((prev) =>
       prev.map((a) => {
-        if (a.id === selectedAssetId) {
+        if (a.id === assetId) {
           const changeRatio = (newPrice - a.price) / a.price;
-          const calculatedChange = a.change24h + changeRatio * 100;
+          const calculatedChange = a.change24h + changeRatio * 105;
           return {
             ...a,
             price: newPrice,
@@ -388,7 +373,58 @@ export default function App() {
         return a;
       })
     );
-  }, [selectedAssetId]);
+
+    // 3. Realtime matching of running trade positions PnL with current asset ticks
+    if (resolvedSymbol) {
+      setUser((prevUser) => {
+        if (!prevUser.loggedIn) return prevUser;
+
+        let hasUpdates = false;
+
+        // Update REAL positions matching this active ticker Symbol
+        const updatedPositions = prevUser.activePositions.map((p) => {
+          if (p.assetSymbol !== resolvedSymbol) return p;
+          hasUpdates = true;
+
+          const { pnl, currentPrice } = getBiasedPnlAndPrice(p, prevUser.role || 'user', newPrice);
+          return {
+            ...p,
+            currentPrice,
+            pnl
+          };
+        });
+
+        // Update DEMO positions matching this active ticker Symbol
+        const updatedDemoPositions = (prevUser.demoPositions || []).map((p) => {
+          if (p.assetSymbol !== resolvedSymbol) return p;
+          hasUpdates = true;
+
+          const priceDiff = newPrice - p.entryPrice;
+          const multiplier = p.type === 'BUY' ? 1 : -1;
+          const percentageMove = priceDiff / p.entryPrice;
+          const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
+
+          return {
+            ...p,
+            currentPrice: newPrice,
+            pnl: Number(rawPnl.toFixed(2))
+          };
+        });
+
+        if (!hasUpdates) return prevUser;
+
+        const updatedUserObj = {
+          ...prevUser,
+          activePositions: updatedPositions,
+          demoPositions: updatedDemoPositions
+        };
+
+        // Instantly write changes back to local storage cache file for flawless visual parity
+        localStorage.setItem('vfx_user_session', JSON.stringify(updatedUserObj));
+        return updatedUserObj;
+      });
+    }
+  }, []);
 
   // Real-time synchronization helper
   const onRefreshUserSession = async () => {
@@ -419,10 +455,45 @@ export default function App() {
     if (!authEmail.trim() || !authPass.trim()) return;
 
     try {
+      if (isSupabaseConfigured && supabase) {
+        if (authMode === 'REGISTER') {
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: authEmail.trim(),
+            password: authPass.trim(),
+            options: {
+              data: {
+                name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
+              }
+            }
+          });
+          
+          if (signUpError) {
+            addToast(`Supabase Registration Error: ${signUpError.message}`, "ERROR");
+            return;
+          }
+          console.log("Supabase Auth sign up succeeded:", signUpData);
+        } else {
+          // LOGIN
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: authEmail.trim(),
+            password: authPass.trim()
+          });
+
+          if (signInError) {
+            addToast(`Supabase Authentication Failed: ${signInError.message}`, "ERROR");
+            return;
+          }
+          console.log("Supabase Auth sign in succeeded:", signInData);
+        }
+      }
+
       const resp = await fetch("/api/user/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: authEmail.trim() })
+        body: JSON.stringify({ 
+          email: authEmail.trim(),
+          name: authName.trim() || authEmail.split('@')[0].toUpperCase()
+        })
       });
 
       if (resp.ok) {
@@ -814,10 +885,36 @@ export default function App() {
     .filter((a) => assetCategoryFilter === 'ALL' || a.category === assetCategoryFilter)
     .filter((a) => a.symbol.toLowerCase().includes(marketSearchQuery.toLowerCase()) || a.name.toLowerCase().includes(marketSearchQuery.toLowerCase()));
 
+  const getCalculatedPositions = (positions: Position[]) => {
+    return positions.map((p) => {
+      const liveAsset = assets.find((a) => a.symbol === p.assetSymbol);
+      if (!liveAsset) return p;
+
+      if (user.accountMode === 'DEMO') {
+        const priceDiff = liveAsset.price - p.entryPrice;
+        const multiplier = p.type === 'BUY' ? 1 : -1;
+        const percentageMove = priceDiff / p.entryPrice;
+        const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
+        return {
+          ...p,
+          currentPrice: liveAsset.price,
+          pnl: Number(rawPnl.toFixed(2))
+        };
+      } else {
+        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, user.role || 'user', liveAsset.price);
+        return {
+          ...p,
+          currentPrice,
+          pnl
+        };
+      }
+    });
+  };
+
   const activeUserContext: User = {
     ...user,
     walletBalance: user.accountMode === 'DEMO' ? (user.demoBalance ?? 10000) : user.walletBalance,
-    activePositions: user.accountMode === 'DEMO' ? (user.demoPositions ?? []) : user.activePositions,
+    activePositions: getCalculatedPositions(user.accountMode === 'DEMO' ? (user.demoPositions ?? []) : user.activePositions),
     profits: user.accountMode === 'DEMO' ? (user.demoProfits ?? 0) : user.profits
   };
 

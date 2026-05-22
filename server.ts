@@ -66,10 +66,90 @@ const memoryUsers: UserMemory[] = [
 ];
 const memoryTransactions: TxMemory[] = [];
 
+const seedDefaultUsers = async () => {
+  const db = getSupabase();
+  if (!db) {
+    console.log("[Supabase Seed] Skipping default user check: Supabase URL and Key are not configured in environment variables.");
+    return;
+  }
+
+  console.log("[Supabase Seed] Seeding / verifying default user profiles on Supabase...");
+  for (const user of memoryUsers) {
+    try {
+      const emailLower = user.email.toLowerCase();
+      const isM = emailLower === "mutwirib964@gmail.com";
+      const name = isM ? "Admin Mutwiri" : "TRADER";
+      
+      const { data: existing, error } = await db.from("profiles").select("email").eq("email", emailLower).maybeSingle();
+      if (error) {
+        console.error(`[Supabase Seed] Error checking existing profile for ${emailLower}:`, error.message);
+        continue;
+      }
+
+      if (!existing) {
+        console.log(`[Supabase Seed] Creating profile row in database for ${emailLower}...`);
+        
+        // Profiles table insert body
+        const profilePayload: any = {
+          email: emailLower,
+          name: name,
+          role: user.role,
+          wallet_balance: user.wallet_balance,
+          is_kyc_verified: isM ? 'verified' : 'unverified',
+          demo_wallet_balance: 10000.0000,
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: insErr } = await db.from("profiles").insert(profilePayload);
+        if (insErr) {
+          console.log(`[Supabase Seed] Primary insert failed: ${insErr.message}. Retrying with total_deposited...`);
+          profilePayload.total_deposited = user.wallet_balance;
+          const { error: retryErr } = await db.from("profiles").insert(profilePayload);
+          if (retryErr) {
+            console.error(`[Supabase Seed] Error inserting profile for ${emailLower}:`, retryErr.message);
+          } else {
+            console.log(`[Supabase Seed] Profile row created with total_deposited for ${emailLower}`);
+          }
+        } else {
+          console.log(`[Supabase Seed] Profile row created successfully for ${emailLower}`);
+        }
+      } else {
+        console.log(`[Supabase Seed] Profile row already exists in database for ${emailLower}`);
+      }
+
+      // Safe option: attempt to register the user in Supabase Auth user database (requires Service Role key / Admin rights)
+      if (db.auth && db.auth.admin) {
+        try {
+          const { data: authUser, error: authErr } = await db.auth.admin.createUser({
+            email: emailLower,
+            password: "Password123!",
+            email_confirm: true,
+            user_metadata: { name: name }
+          });
+          
+          if (authErr) {
+            if (authErr.message?.toLowerCase().includes("already") || (authErr as any).status === 422) {
+              console.log(`[Supabase Auth Seed] Auth account for ${emailLower} already exists.`);
+            } else {
+              console.log(`[Supabase Auth Seed Note] Could not register ${emailLower} via admin auth API (normal if anon key):`, authErr.message);
+            }
+          } else if (authUser && authUser.user) {
+            console.log(`[Supabase Auth Seed] Auth credential for ${emailLower} successfully registered with password "Password123!"`);
+          }
+        } catch (authEx: any) {
+          console.log(`[Supabase Auth Seed Note] Admin Auth call skipped: ${authEx.message}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[Supabase Seed] Exception seeding user ${user.email}:`, err.message || err);
+    }
+  }
+};
+
 // Dynamic sync endpoint
 app.post("/api/user/sync", async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, name } = req.body;
     if (!email) {
       return res.status(400).json({ error: "Email is required to sync account." });
     }
@@ -84,15 +164,30 @@ app.post("/api/user/sync", async (req, res) => {
       if (!profile) {
         const initialRole = isAdminEmail ? "admin" : "user";
         const initialBalance = isAdminEmail ? 1000 : 0;
+        const defaultName = name || emailLower.split('@')[0].toUpperCase();
         
-        const { data: newProfile } = await db.from("profiles").insert({
+        const insertPayload: any = {
           email: emailLower,
+          name: defaultName,
           role: initialRole,
           wallet_balance: initialBalance,
-          total_deposited: initialBalance
-        }).select().single();
+          is_kyc_verified: isAdminEmail ? 'verified' : 'unverified',
+          demo_wallet_balance: 10000.0000,
+          updated_at: new Date().toISOString()
+        };
+        
+        const { data: newProfile, error: insErr } = await db.from("profiles").insert(insertPayload).select().maybeSingle();
 
-        if (newProfile) {
+        if (insErr) {
+          console.log(`[Supabase API] Primary insert failed, retrying with total_deposited:`, insErr.message);
+          insertPayload.total_deposited = initialBalance;
+          const { data: retryProfile, error: retryErr } = await db.from("profiles").insert(insertPayload).select().maybeSingle();
+          if (retryProfile) {
+            profile = retryProfile;
+          } else {
+            console.error(`[Supabase API] Retry insert failed as well:`, retryErr?.message);
+          }
+        } else if (newProfile) {
           profile = newProfile;
         }
       }
@@ -101,7 +196,7 @@ app.post("/api/user/sync", async (req, res) => {
         return res.json({
           email: profile.email,
           role: profile.role || (isAdminEmail ? "admin" : "user"),
-          walletBalance: profile.wallet_balance !== undefined ? profile.wallet_balance : 0,
+          walletBalance: profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
           phone: profile.phone || ""
         });
       }
@@ -154,10 +249,54 @@ function formatMpesaPhone(p: string): string {
 
 const getPayheroConfig = () => {
   return {
-    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "Basic S2dIdjh6WGV0TFg1a0dQRWlkOWs6MWdLMDZmMTF3T1VOTk01N3poZnprSVBaY254N3hlazZYNXgzanhjWg==",
+    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "Basic RDhvMFZXQUtkQWlNdXpIQzFwUXA6dnVtWjJQNHlKUmlzZkYzZmpDN2lvbU1PWkFkajBGb1dQNGlkN0lwMQ==",
     channelId: process.env.PAYHERO_CHANNEL_ID || "4575"
   };
 };
+
+app.get("/api/payhero/check-status", async (req, res) => {
+  try {
+    const { reference } = req.query;
+    if (!reference) {
+      return res.status(400).json({ error: "No reference provided." });
+    }
+
+    console.log(`Polling status checking for reference: ${reference}`);
+    const tx = memoryTransactions.find(t => (t as any).reference === reference);
+    
+    if (tx) {
+      return res.json({
+        success: true,
+        status: tx.status,
+        amount: tx.amount,
+        asset: tx.asset
+      });
+    }
+
+    // Checking in Supabase db as well
+    const db = getSupabase();
+    if (db) {
+      const { data: profileTx } = await db.from("transactions")
+        .select("*")
+        .eq("address", `M-Pesa IPN Ref: ${reference}`)
+        .maybeSingle();
+
+      if (profileTx) {
+        return res.json({
+          success: true,
+          status: profileTx.status,
+          amount: profileTx.amount,
+          asset: profileTx.asset
+        });
+      }
+    }
+
+    return res.json({ success: true, status: "PENDING" });
+  } catch (err: any) {
+    console.error("Error checking transaction status:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post("/api/payhero/stkpush", async (req, res) => {
   try {
@@ -205,7 +344,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       callback_url: callbackUrl
     };
 
-    const payheroResponse = await fetch("https://backend.payhero.co.ke/api/v2/payments/charge-m-pesa", {
+    const payheroResponse = await fetch("https://backend.payhero.co.ke/api/v2/payments", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -237,8 +376,9 @@ app.post("/api/payhero/stkpush", async (req, res) => {
         asset: "M-Pesa Mobile Push (Pending)",
         address: cleanedPhone,
         date: new Date().toISOString(),
-        status: "PENDING"
-      });
+        status: "PENDING",
+        reference: externalRef
+      } as any);
 
       return res.json({ success: true, reference: externalRef, payload: parsedBody });
     } else {
@@ -296,7 +436,7 @@ app.post("/api/payhero/callback", async (req, res) => {
             type: "DEPOSIT",
             amount: usdAdded,
             asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
-            address: `Automatic IPN Callback`,
+            address: `M-Pesa IPN Ref: ${external_reference}`,
             status: "COMPLETED"
           });
         }
@@ -311,16 +451,44 @@ app.post("/api/payhero/callback", async (req, res) => {
       memUser.wallet_balance = Number((memUser.wallet_balance + usdAdded).toFixed(2));
       memUser.total_deposited = Number((memUser.total_deposited + usdAdded).toFixed(2));
 
-      memoryTransactions.push({
-        id: `tx-fin-${Date.now()}`,
-        email,
-        type: "DEPOSIT",
-        amount: usdAdded,
-        asset: `M-Pesa Sandbox (Mpesa Code: ${mpesa_code || 'IPN'})`,
-        address: "IPN Automatic Callback",
-        date: new Date().toISOString(),
-        status: "COMPLETED"
-      });
+      // Update the pending transaction status if it already exists
+      const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
+      if (txIndex !== -1) {
+        memoryTransactions[txIndex].status = "COMPLETED";
+        memoryTransactions[txIndex].amount = usdAdded;
+        memoryTransactions[txIndex].asset = `M-Pesa Sandbox (Mpesa Code: ${mpesa_code || 'Cleared'})`;
+      } else {
+        memoryTransactions.push({
+          id: `tx-fin-${Date.now()}`,
+          email,
+          type: "DEPOSIT",
+          amount: usdAdded,
+          asset: `M-Pesa Sandbox (Mpesa Code: ${mpesa_code || 'IPN'})`,
+          address: "IPN Automatic Callback",
+          date: new Date().toISOString(),
+          status: "COMPLETED",
+          reference: external_reference
+        } as any);
+      }
+    } else {
+      console.log(`PAYHERO CALLBACK SIGNALLED FAILURE: status=${status}`);
+      const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
+      if (txIndex !== -1) {
+        memoryTransactions[txIndex].status = "FAILED";
+        memoryTransactions[txIndex].asset = "M-Pesa Mobile Push (Failed)";
+      }
+      
+      const db = getSupabase();
+      if (db) {
+        await db.from("transactions").insert({
+          email,
+          type: "DEPOSIT",
+          amount: 0,
+          asset: "M-Pesa (Cancelled/Declined)",
+          address: `M-Pesa IPN Ref: ${external_reference}`,
+          status: "FAILED"
+        });
+      }
     }
 
     res.json({ success: true, message: "Webhook accepted & cleared." });
@@ -333,24 +501,24 @@ app.post("/api/payhero/callback", async (req, res) => {
 // A localized mock sandbox trigger so a customer/admin can test their integration inside the preview!
 app.post("/api/payhero/sandbox-trigger", async (req, res) => {
   try {
-    const { email, amount_usd } = req.body;
+    const { email, amount_usd, external_reference, status } = req.body;
     if (!email || !amount_usd) {
       return res.status(400).json({ error: "Missing sandbox parameters." });
     }
 
     const fakeMpesaCode = "S" + Math.random().toString(36).substring(2, 11).toUpperCase();
-    const externalRef = `${email.replace(/@/g, "_at_").replace(/\./g, "_dot_")}__${Date.now()}`;
+    const refToUse = external_reference || `${email.replace(/@/g, "_at_").replace(/\./g, "_dot_")}__${Date.now()}`;
 
     // Simulate callback payload exactly
     const callbackPayload = {
-      status: "SUCCESSFUL",
-      external_reference: externalRef,
+      status: status || "SUCCESSFUL",
+      external_reference: refToUse,
       amount: Math.round(Number(amount_usd) * 130),
       mpesa_code: fakeMpesaCode,
-      success: true
+      success: status === "FAILED" ? false : true
     };
 
-    console.log("INITIATING SIMULATED PAYHERO INBOUND CALLBACK ENVELOPE...");
+    console.log(`INITIATING SIMULATED PAYHERO INBOUND CALLBACK ENVELOPE (Reference: ${refToUse})`);
 
     // call local webhook internally
     const webhookResp = await fetch(`http://localhost:${PORT}/api/payhero/callback`, {
@@ -584,6 +752,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`VexcoinFX elite fullstack portal running on http://localhost:${PORT}`);
+    seedDefaultUsers();
   });
 }
 

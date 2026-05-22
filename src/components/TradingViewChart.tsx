@@ -13,7 +13,7 @@ interface ChartCandle {
 
 interface TradingViewChartProps {
   activeAsset: Asset;
-  onPriceTick: (newPrice: number) => void;
+  onPriceTick: (assetId: string, newPrice: number) => void;
 }
 
 export default function TradingViewChart({ activeAsset, onPriceTick }: TradingViewChartProps) {
@@ -26,7 +26,6 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
 
-  const phaseSeedRef = useRef<number>(0);
   const tickCounterRef = useRef<number>(0);
   const loadedKeyRef = useRef<string>('');
 
@@ -36,80 +35,76 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
   const categoryRef = useRef(activeAsset.category);
   categoryRef.current = activeAsset.category;
 
+  const activeAssetIdRef = useRef(activeAsset.id);
+  activeAssetIdRef.current = activeAsset.id;
+
   const onPriceTickRef = useRef(onPriceTick);
   useEffect(() => {
     onPriceTickRef.current = onPriceTick;
   }, [onPriceTick]);
 
-  // A continuous multi-harmonic mathematical market curve that creates rich organic wave patterns
-  const getSimulatedPriceAtPhase = (phase: number, basePrice: number, category: string): number => {
-    let amp = 0.009;
-    if (category === 'forex') amp = 0.00045;
-    else if (category === 'crypto') amp = 0.018;
-    else if (category === 'stocks') amp = 0.0065;
-
-    // 1. Slow macro wave representing general market cycles (bull phases, bear pullbacks)
-    const macroTrend = Math.sin(phase / 28) * 1.5;
-
-    // 2. Medium cycle wave modeling pullbacks, resistance retests, double bottoms
-    const cycleRange = Math.cos(phase / 8) * Math.sin(phase / 18) * 0.8;
-
-    // 3. High frequency short-term day swings and noise (zigzags)
-    const shortTermSec = Math.sin(phase / 2.5) * Math.cos(phase / 4.8) * 0.35;
-
-    // 4. Trend channels
-    const channelDrift = Math.sin(phase / 65) * 0.7;
-
-    const totalFluctuation = (macroTrend + cycleRange + shortTermSec + channelDrift) * amp;
-
-    return basePrice * (1 + totalFluctuation);
-  };
-
-  // Generate initial simulated candles based on active asset price and continuous model
+  // Generate initial simulated candles based on a highly realistic drift-diffusion random walk model
   useEffect(() => {
-    // Generate a completely randomized offset to ensure charts appear completely unique across logins
-    const offsetVal = Math.floor(Math.random() * 20000) + 1;
-    const hash = (activeAsset.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 10) + offsetVal) % 400 + 10;
-    phaseSeedRef.current = hash;
-    tickCounterRef.current = 0; // Reset live ticks progress counter
-
     const basePrice = activeAsset.price;
+    const change24h = activeAsset.change24h || 0;
     const initialCandles: ChartCandle[] = [];
     const length = 100;
 
-    // We align the final candle (index 99) close to match current active price 100% perfectly
-    const modelPriceAtLast = getSimulatedPriceAtPhase(hash + 99, basePrice, activeAsset.category);
-    const adjustmentRatio = modelPriceAtLast !== 0 ? basePrice / modelPriceAtLast : 1;
+    // Determine volatility and wick parameters based on asset category
+    let vol = 0.0015;
+    let wick = 0.002;
+    if (activeAsset.category === 'forex') {
+      vol = 0.0001;
+      wick = 0.00015;
+    } else if (activeAsset.category === 'crypto') {
+      vol = 0.0035;
+      wick = 0.005;
+    } else if (activeAsset.category === 'stocks') {
+      vol = 0.0008;
+      wick = 0.0012;
+    }
 
-    // Configure custom wick scaling factors
-    let wickFactor = 0.0006;
-    if (activeAsset.category === 'forex') wickFactor = 0.00008;
-    else if (activeAsset.category === 'crypto') wickFactor = 0.0018;
-    else if (activeAsset.category === 'stocks') wickFactor = 0.0004;
+    // Scale volatility by timeframe
+    if (timeframe === '1m') {
+      vol *= 0.5;
+      wick *= 0.5;
+    } else if (timeframe === '1H') {
+      vol *= 1.8;
+      wick *= 1.8;
+    } else if (timeframe === '1D') {
+      vol *= 3.5;
+      wick *= 3.5;
+    }
 
-    // Scale wicks/volatility of candles with timeframes
-    if (timeframe === '1m') wickFactor *= 0.45;
-    else if (timeframe === '1H') wickFactor *= 1.5;
-    else if (timeframe === '1D') wickFactor *= 3.2;
+    // Setup random walk starting price backwards based on 24h change
+    const startPrice = basePrice / (1 + change24h / 100);
+    let current = startPrice;
+    const rawPrices: number[] = [startPrice];
+
+    for (let i = 1; i <= length; i++) {
+      // Gentle drift towards our final target close price
+      const idealPrice = startPrice + (basePrice - startPrice) * (i / length);
+      const meanReversion = (idealPrice - current) * 0.15;
+      const change = (Math.random() - 0.5) * vol + meanReversion / current;
+      current = current * (1 + change);
+      rawPrices.push(current);
+    }
+
+    // Align the final price perfectly with the current base price
+    const finalClose = rawPrices[length];
+    const diff = basePrice - finalClose;
 
     for (let i = 0; i < length; i++) {
-      const openPhase = hash + i;
-      const closePhase = hash + i + 1;
+      let open = rawPrices[i] + diff * (i / length);
+      let close = rawPrices[i + 1] + diff * ((i + 1) / length);
 
-      const open = getSimulatedPriceAtPhase(openPhase, basePrice, activeAsset.category) * adjustmentRatio;
-      const close = getSimulatedPriceAtPhase(closePhase, basePrice, activeAsset.category) * adjustmentRatio;
+      // Generate clean realistic candle wicks (high / low extremes)
+      const rand1 = Math.random();
+      const rand2 = Math.random();
+      const high = Math.max(open, close) + (rand1 * wick * ((open + close) / 2));
+      const low = Math.min(open, close) - (rand2 * wick * ((open + close) / 2));
 
-      // Deterministic pseudo-random seed values per index to make wicks beautiful
-      const randSeed1 = Math.sin(openPhase * 1.7) * 0.5 + 0.5;
-      const randSeed2 = Math.cos(closePhase * 2.3) * 0.5 + 0.5;
-      
-      const highWick = randSeed1 * (open + close) / 2 * wickFactor;
-      const lowWick = randSeed2 * (open + close) / 2 * wickFactor;
-
-      const high = Math.max(open, close) + highWick;
-      const low = Math.min(open, close) - lowWick;
-
-      const volume = Math.round((randSeed1 * 120) + 30);
+      const volume = Math.round(Math.random() * 100 + 20);
 
       const dateObj = new Date();
       if (timeframe === '1m') dateObj.setMinutes(dateObj.getMinutes() - (length - i));
@@ -117,83 +112,91 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
       else if (timeframe === '1H') dateObj.setHours(dateObj.getHours() - (length - i));
       else dateObj.setDate(dateObj.getDate() - (length - i));
 
+      const digits = activeAsset.category === 'forex' ? 4 : 2;
       initialCandles.push({
         time: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        open: Number(open.toFixed(activeAsset.category === 'forex' ? 4 : 2)),
-        high: Number(high.toFixed(activeAsset.category === 'forex' ? 4 : 2)),
-        low: Number(low.toFixed(activeAsset.category === 'forex' ? 4 : 2)),
-        close: Number(close.toFixed(activeAsset.category === 'forex' ? 4 : 2)),
+        open: Number(open.toFixed(digits)),
+        high: Number(high.toFixed(digits)),
+        low: Number(low.toFixed(digits)),
+        close: Number(close.toFixed(digits)),
         volume,
       });
     }
 
+    tickCounterRef.current = 0;
     loadedKeyRef.current = `${activeAsset.id}_${timeframe}`;
     setCandles(initialCandles);
   }, [activeAsset.id, timeframe]);
 
   // Live simulation ticks
   useEffect(() => {
-    const ticksPerCandle = 12;
+    const ticksPerCandle = 8;
+    const currentAssetId = activeAsset.id;
 
     const intervalId = setInterval(() => {
       if (candles.length === 0) return;
 
-      const currentSeed = phaseSeedRef.current;
+      const loadedKey = loadedKeyRef.current;
+      const expectedKey = `${currentAssetId}_${timeframe}`;
+
+      // Prevent processing any delayed/stale events for assets no longer currently loaded
+      if (loadedKey !== expectedKey || activeAssetIdRef.current !== currentAssetId) {
+        return;
+      }
+
       const currentPrice = priceRef.current;
       const currentCategory = categoryRef.current;
 
-      // Increment live tick progress
-      tickCounterRef.current += 1;
-      const tickProgress = tickCounterRef.current / ticksPerCandle;
+      // Determine micro tick volatility based on asset categories
+      let tickVol = 0.0003;
+      if (currentCategory === 'forex') tickVol = 0.00003;
+      else if (currentCategory === 'crypto') tickVol = 0.0007;
+      else if (currentCategory === 'stocks') tickVol = 0.0002;
 
-      // Align model curve with current activeAsset price
-      const modelPriceAtLast = getSimulatedPriceAtPhase(currentSeed + 99, currentPrice, currentCategory);
-      const adjustmentRatio = modelPriceAtLast !== 0 ? currentPrice / modelPriceAtLast : 1;
+      // Scale minor ticks with timeframe
+      if (timeframe === '1m') tickVol *= 0.6;
+      else if (timeframe === '1H') tickVol *= 1.4;
+      else if (timeframe === '1D') tickVol *= 2.2;
 
-      // Evaluate raw continuous price at fractional state phase
-      const currentPhase = currentSeed + 99 + tickProgress;
-      const rawModelPrice = getSimulatedPriceAtPhase(currentPhase, currentPrice, currentCategory) * adjustmentRatio;
+      // Gentle random tick movement with subtle drift
+      const change = (Math.random() - 0.5) * tickVol;
+      const nextTickPrice = Number((currentPrice * (1 + change)).toFixed(currentCategory === 'forex' ? 4 : 2));
 
-      // Micro bid-ask vibrance
-      const scale = currentCategory === 'forex' ? 0.00004 : currentCategory === 'crypto' ? 0.0006 : 0.00015;
-      const microNoise = (Math.sin(tickCounterRef.current * 1.8) * 0.4 + (Math.random() - 0.5) * 0.6) * currentPrice * scale;
-      
-      const nextTickPrice = Number((rawModelPrice + microNoise).toFixed(currentCategory === 'forex' ? 4 : 2));
-
-      // Trigger state push back
-      onPriceTickRef.current(nextTickPrice);
+      // Precision push back of state to the parent, explicitly bound to security asset ID
+      onPriceTickRef.current(currentAssetId, nextTickPrice);
 
       setCandles((prev) => {
-        if (loadedKeyRef.current !== `${activeAsset.id}_${timeframe}`) {
+        // Double check thread / context safety
+        if (loadedKeyRef.current !== expectedKey || prev.length === 0) {
           return prev;
         }
-        if (prev.length === 0) return prev;
+
         const next = [...prev];
         const last = { ...next[next.length - 1] };
 
+        tickCounterRef.current += 1;
         if (tickCounterRef.current >= ticksPerCandle) {
-          // Append completed candle block and cycle seed phase
+          // Commit finalized values to active open candle slot
           last.close = nextTickPrice;
           last.high = Math.max(last.high, nextTickPrice);
           last.low = Math.min(last.low, nextTickPrice);
           next[next.length - 1] = last;
 
-          phaseSeedRef.current += 1;
+          // Push a brand new active streaming candle slot
           tickCounterRef.current = 0;
-
           const dateObj = new Date();
           const newCandle: ChartCandle = {
             time: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            open: last.close,
-            high: last.close,
-            low: last.close,
-            close: last.close,
-            volume: Math.round(Math.random() * 100 + 15),
+            open: nextTickPrice,
+            high: nextTickPrice,
+            low: nextTickPrice,
+            close: nextTickPrice,
+            volume: Math.round(Math.random() * 80 + 20),
           };
 
           return [...next.slice(1), newCandle];
         } else {
-          // Pulse the active open candle wicks and close
+          // Dynamic live update within active open block
           last.close = nextTickPrice;
           last.high = Math.max(last.high, nextTickPrice);
           last.low = Math.min(last.low, nextTickPrice);
@@ -201,7 +204,7 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
           return next;
         }
       });
-    }, 1200);
+    }, 1500);
 
     return () => clearInterval(intervalId);
   }, [candles.length, timeframe, activeAsset.id]);
@@ -396,14 +399,16 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
             const lowY = getY(candle.low);
 
             const isUp = candle.close >= candle.open;
-            const strokeColor = isUp ? '#10b981' : '#f43f5e';
-            const fillColor = isUp ? '#059669' : '#e11d48';
+            
+            // TradingView Theme Colors
+            const strokeColor = isUp ? '#089981' : '#f23645';
+            const fillColor = isUp ? '#089981' : '#f23645';
 
-            const candleWidth = Math.max(3, (chartWidth - 80) / zoomLevel * 0.65);
+            const candleWidth = Math.max(4, (chartWidth - 80) / zoomLevel * 0.7);
 
             return (
               <g key={idx}>
-                {/* Wick shadow */}
+                {/* Wick shadow (High-Low extreme extremes) */}
                 <line
                   x1={x}
                   y1={highY}
@@ -412,7 +417,7 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
                   stroke={strokeColor}
                   strokeWidth="1.5"
                 />
-                {/* Body candle block */}
+                {/* Body candle block (Open-Close body) */}
                 <rect
                   x={x - candleWidth / 2}
                   y={Math.min(openY, closeY)}
@@ -420,7 +425,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
                   height={Math.max(1.5, Math.abs(closeY - openY))}
                   fill={fillColor}
                   stroke={strokeColor}
-                  className="transition-all duration-300 hover:brightness-125"
+                  strokeWidth="0.8"
+                  className="hover:brightness-125"
                 />
               </g>
             );
