@@ -221,9 +221,9 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
                         : 'bg-[#121826]/30 border-gray-950 text-gray-400 hover:text-gray-200 hover:bg-[#121826]/50'
                     }`}
                   >
-                    <div className="flex justify-between items-center w-full">
-                      <span className="truncate max-w-[130px] font-bold">{u.email}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold font-mono tracking-widest uppercase ${
+                    <div className="flex justify-between items-start w-full gap-2">
+                      <span className="break-all font-bold text-gray-200 select-all" title={u.email}>{u.email}</span>
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono tracking-widest uppercase ${
                         u.role === 'admin' ? 'bg-rose-500/15 text-rose-400' : u.role === 'marketer' ? 'bg-purple-500/15 text-purple-400' : 'bg-gray-800 text-gray-500'
                       }`}>
                         {u.role || 'user'}

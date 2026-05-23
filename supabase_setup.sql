@@ -134,3 +134,85 @@ DO UPDATE SET
   role = 'admin',
   is_kyc_verified = 'verified',
   updated_at = timezone('utc'::text, now());
+
+-- 6. Clean and secure administrative database routines to bypass RLS safely
+CREATE OR REPLACE FUNCTION public.admin_update_profile(
+    admin_uid UUID,
+    target_email TEXT,
+    new_role TEXT,
+    new_balance NUMERIC,
+    new_deposited NUMERIC
+) RETURNS VOID AS $$
+DECLARE
+    is_admin BOOLEAN;
+BEGIN
+    -- Verify the authority of admin_uid
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = admin_uid AND role = 'admin'
+    ) INTO is_admin;
+
+    -- Also check for mutwirib964@gmail.com
+    IF NOT is_admin AND admin_uid = 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99'::uuid THEN
+        is_admin := TRUE;
+    END IF;
+
+    IF NOT is_admin THEN
+        RAISE EXCEPTION 'Access denied. Exclusive administrative clearance required.';
+    END IF;
+
+    -- Perform the role and balance updates safely
+    UPDATE public.profiles
+    SET role = new_role,
+        wallet_balance = new_balance,
+        total_deposited = new_deposited,
+        updated_at = timezone('utc'::text, now())
+    WHERE LOWER(email) = LOWER(target_email);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+CREATE OR REPLACE FUNCTION public.system_credit_user(
+    secure_token TEXT,
+    target_email TEXT,
+    usd_amount NUMERIC
+) RETURNS VOID AS $$
+DECLARE
+    expected_token TEXT := 'payhero_system_clear_token_vfx';
+BEGIN
+    IF secure_token <> expected_token THEN
+        RAISE EXCEPTION 'Invalid system clearance token.';
+    END IF;
+
+    UPDATE public.profiles
+    SET wallet_balance = wallet_balance + usd_amount,
+        total_deposited = total_deposited + usd_amount,
+        updated_at = timezone('utc'::text, now())
+    WHERE LOWER(email) = LOWER(target_email);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+CREATE OR REPLACE FUNCTION public.system_record_transaction(
+    secure_token TEXT,
+    target_email TEXT,
+    tx_type TEXT,
+    tx_amount NUMERIC,
+    tx_asset TEXT,
+    tx_address TEXT,
+    tx_status TEXT
+) RETURNS VOID AS $$
+DECLARE
+    expected_token TEXT := 'payhero_system_clear_token_vfx';
+BEGIN
+    IF secure_token <> expected_token THEN
+        RAISE EXCEPTION 'Invalid system clearance token.';
+    END IF;
+
+    -- Ensure we have a matching record in public.transactions safely
+    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, created_at)
+    VALUES (target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), timezone('utc'::text, now()));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+

@@ -475,20 +475,43 @@ app.post("/api/payhero/callback", async (req, res) => {
       // 1. Credit Supabase if ONLINE
       const db = getSupabase();
       if (db) {
-        // Fetch current user details
-        const { data: profile } = await db.from("profiles").select("wallet_balance, total_deposited").eq("email", email).single();
-        if (profile) {
-          const updatedBal = Number(((profile.wallet_balance || 0) + usdAdded).toFixed(2));
-          const updatedDep = Number(((profile.total_deposited || 0) + usdAdded).toFixed(2));
-          
-          await db.from("profiles").update({
-            wallet_balance: updatedBal,
-            total_deposited: updatedDep
-          }).eq("email", email);
+        const emailLower = email.toLowerCase().trim();
+        // Invoke credit bypass RPC
+        const { error: creditRpcErr } = await db.rpc("system_credit_user", {
+          secure_token: 'payhero_system_clear_token_vfx',
+          target_email: emailLower,
+          usd_amount: usdAdded
+        });
 
-          // Append clear transaction logs
+        if (creditRpcErr) {
+          console.warn("system_credit_user RPC failed, running fallback legacy update:", creditRpcErr.message);
+          const { data: profile } = await db.from("profiles").select("wallet_balance, total_deposited").eq("email", emailLower).single();
+          if (profile) {
+            const updatedBal = Number(((profile.wallet_balance || 0) + usdAdded).toFixed(2));
+            const updatedDep = Number(((profile.total_deposited || 0) + usdAdded).toFixed(2));
+            
+            await db.from("profiles").update({
+              wallet_balance: updatedBal,
+              total_deposited: updatedDep
+            }).eq("email", emailLower);
+          }
+        }
+
+        // Invoke transaction insert bypass RPC
+        const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+          secure_token: 'payhero_system_clear_token_vfx',
+          target_email: emailLower,
+          tx_type: "DEPOSIT",
+          tx_amount: usdAdded,
+          tx_asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`,
+          tx_address: `IPN Ref: ${external_reference}`,
+          tx_status: "COMPLETED"
+        });
+
+        if (txRpcErr) {
+          console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
           await db.from("transactions").insert({
-            email,
+            email: emailLower,
             type: "DEPOSIT",
             amount: usdAdded,
             asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
@@ -688,8 +711,9 @@ app.post("/api/admin/update-user", async (req, res) => {
     }
 
     if (db) {
+      const emailLower = email.toLowerCase().trim();
       // 1. Fetch current profile values
-      const { data: profile } = await db.from("profiles").select("wallet_balance, total_deposited").eq("email", email).single();
+      const { data: profile } = await db.from("profiles").select("wallet_balance, total_deposited").eq("email", emailLower).single();
       if (profile) {
         let finalBal = wallet_balance !== undefined ? Number(wallet_balance) : profile.wallet_balance;
         let finalDep = profile.total_deposited;
@@ -698,22 +722,48 @@ app.post("/api/admin/update-user", async (req, res) => {
           finalBal = Number((finalBal + onboardingBonus).toFixed(2));
           finalDep = Number((finalDep + onboardingBonus).toFixed(2));
 
-          // Insert matching deposit log
-          await db.from("transactions").insert({
-            email,
-            type: "DEPOSIT",
-            amount: onboardingBonus,
-            asset: "Marketer Onboarding Credit",
-            address: "Administrative Event",
-            status: "COMPLETED"
+          // Record deposit with RPC bypass or standard fallback
+          const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+            secure_token: 'payhero_system_clear_token_vfx',
+            target_email: emailLower,
+            tx_type: "DEPOSIT",
+            tx_amount: onboardingBonus,
+            tx_asset: "Marketer Onboarding Credit",
+            tx_address: "Administrative Event",
+            tx_status: "COMPLETED"
           });
+
+          if (txRpcErr) {
+            console.warn("system_record_transaction RPC not created or failed, falling back to standard insert:", txRpcErr.message);
+            await db.from("transactions").insert({
+              email: emailLower,
+              type: "DEPOSIT",
+              amount: onboardingBonus,
+              asset: "Marketer Onboarding Credit",
+              address: "Administrative Event",
+              status: "COMPLETED"
+            });
+          }
         }
 
-        await db.from("profiles").update({
-          role,
-          wallet_balance: finalBal,
-          total_deposited: finalDep
-        }).eq("email", email);
+        // Save profile details using RPC security bypass or standard fallback
+        const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
+        const { error: rpcErr } = await db.rpc("admin_update_profile", {
+          admin_uid: callerUid,
+          target_email: emailLower,
+          new_role: role,
+          new_balance: finalBal,
+          new_deposited: finalDep
+        });
+
+        if (rpcErr) {
+          console.warn("admin_update_profile RPC not created or failed, falling back to standard update:", rpcErr.message);
+          await db.from("profiles").update({
+            role,
+            wallet_balance: finalBal,
+            total_deposited: finalDep
+          }).eq("email", emailLower);
+        }
       }
     }
 

@@ -31,9 +31,11 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const [timeMode, setTimeMode] = useState<'real' | 'simulated'>('real');
   const [countdownText, setCountdownText] = useState<string>('');
+  const [progressFraction, setProgressFraction] = useState<number>(0);
 
   const tickCounterRef = useRef<number>(0);
   const loadedKeyRef = useRef<string>('');
+  const waveCycleRef = useRef<number>(Math.random() * 200);
 
   const priceRef = useRef(activeAsset.price);
   priceRef.current = activeAsset.price;
@@ -180,6 +182,11 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
     setCandles(initialCandles);
   }, [activeAsset.id, timeframe]);
 
+  // Reset smooth progress state on core user variables change
+  useEffect(() => {
+    setProgressFraction(0);
+  }, [activeAsset.id, timeframe, timeMode]);
+
   const simulatedProgressRef = useRef<number>(0);
   const lastTimeBlockRef = useRef<number>(0);
 
@@ -220,17 +227,27 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
 
       const currentPrice = priceRef.current;
 
-      // Determine micro tick volatility based on asset categories
-      let tickVol = 0.00012;
-      if (currentCategory === 'forex') tickVol = 0.00001;
-      else if (currentCategory === 'stocks') tickVol = 0.00003;
+      // Increment wave cycle for continuous fluid motion
+      waveCycleRef.current = (waveCycleRef.current || 0) + 0.035;
 
-      // Scale minor ticks with timeframe
-      if (timeframe === '1m') tickVol *= 0.5;
-      else if (timeframe === '1H') tickVol *= 1.4;
-      else if (timeframe === '1D') tickVol *= 2.4;
+      // Base volatility parameters to ensure distinct, non-stagnant price movement
+      let baseVol = 0.00035; // default (crypto/commodities) (reduced from 0.0016 for realistic smoothness)
+      if (currentCategory === 'forex') baseVol = 0.00004; // (reduced from 0.00024)
+      else if (currentCategory === 'stocks') baseVol = 0.00012; // (reduced from 0.00065)
 
-      const change = (Math.random() - 0.5) * tickVol;
+      // Scale volatility safely based on timeframe
+      if (timeframe === '1m') baseVol *= 0.8;
+      else if (timeframe === '1H') baseVol *= 1.4;
+      else if (timeframe === '1D') baseVol *= 2.0;
+
+      // Dynamic wave trend combines basic sine/cosine waves to model natural bullish + bearish waves slowly
+      const waveDrift = Math.sin(waveCycleRef.current) * 0.00008 + Math.cos(waveCycleRef.current * 0.35) * 0.00004;
+
+      // Stochastic noise term
+      const noise = (Math.random() - 0.5) * baseVol;
+
+      // Combine drift wave with white noise for realistic, smooth volatility
+      const change = waveDrift + noise;
       const nextTickPrice = Number((currentPrice * (1 + change)).toFixed(currentCategory === 'forex' ? 4 : 2));
 
       // Push price tick to parent context smoothly
@@ -239,6 +256,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
       const RightNow = Date.now();
       let shouldSpawnNew = false;
       let remainingMs = 0;
+
+      let currFraction = 0;
 
       if (timeMode === 'real') {
         let blockMs = 60000;
@@ -259,15 +278,18 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
           shouldSpawnNew = true;
           lastTimeBlockRef.current = currentBlock;
         }
-      } else {
-        // Fast-forward simulated timelines
-        let simulatedLimit = 15000;
-        if (timeframe === '1m') simulatedLimit = 15000;
-        else if (timeframe === '5m') simulatedLimit = 30000;
-        else if (timeframe === '1H') simulatedLimit = 60000;
-        else if (timeframe === '1D') simulatedLimit = 120000;
 
-        simulatedProgressRef.current += 200;
+        const elapsed = blockMs - remainingMs;
+        currFraction = elapsed / blockMs;
+      } else {
+        // Fast-forward simulated timelines - significantly lengthened to allow gradual order-block formation
+        let simulatedLimit = 45000; // 45 seconds for 1m
+        if (timeframe === '1m') simulatedLimit = 45000;
+        else if (timeframe === '5m') simulatedLimit = 90000; // 90 seconds
+        else if (timeframe === '1H') simulatedLimit = 180000;
+        else if (timeframe === '1D') simulatedLimit = 300000;
+
+        simulatedProgressRef.current += 500;
         remainingMs = Math.max(0, simulatedLimit - simulatedProgressRef.current);
 
         const totalSecs = Math.max(0, Math.floor(remainingMs / 1000));
@@ -279,7 +301,11 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
           shouldSpawnNew = true;
           simulatedProgressRef.current = 0;
         }
+
+        currFraction = simulatedProgressRef.current / simulatedLimit;
       }
+
+      setProgressFraction(shouldSpawnNew ? 0 : currFraction);
 
       setCandles((prev) => {
         if (loadedKeyRef.current !== expectedKey || prev.length === 0) {
@@ -324,7 +350,7 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
         globalCandleCache[expectedKey] = result;
         return result;
       });
-    }, 200);
+    }, 500);
 
     return () => clearInterval(intervalId);
   }, [candles.length, timeframe, activeAsset.id, timeMode]);
@@ -358,7 +384,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
 
   // Projection coordinate conversions
   const getX = (index: number) => {
-    return (index / (zoomLevel - 1)) * drawableWidth + leftMargin;
+    const adjustedIndex = index - progressFraction;
+    return (adjustedIndex / (zoomLevel - 1)) * drawableWidth + leftMargin;
   };
 
   const getY = (price: number) => {
@@ -445,11 +472,11 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Nearest item index determination
+    // Nearest item index determination accounting for progressFraction offset scrolling
     const relativeX = (x / rect.width) * chartWidth;
     const adjustedX = relativeX - leftMargin;
     const indexFloat = (adjustedX / drawableWidth) * (zoomLevel - 1);
-    const index = Math.min(zoomLevel - 1, Math.max(0, Math.round(indexFloat)));
+    const index = Math.min(zoomLevel - 1, Math.max(0, Math.round(indexFloat + progressFraction)));
 
     if (visibleCandles[index]) {
       setHoverIndex(index);
@@ -601,26 +628,34 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
           onMouseMove={handleMouseMove}
           onMouseLeave={() => setHoverIndex(null)}
         >
-          {/* Subtle Vertical Grid Lines (Matches Picture 2) */}
-          {visibleCandles.map((c, idx) => {
-            if (idx % Math.round(zoomLevel / 7) === 0) {
-              const x = getX(idx);
-              return (
-                <line
-                  key={`v-grid-${idx}`}
-                  x1={x}
-                  y1={20}
-                  x2={x}
-                  y2={330}
-                  stroke="#1f2937"
-                  strokeWidth="0.5"
-                  strokeOpacity="0.2"
-                  strokeDasharray="2 3"
-                />
-              );
-            }
-            return null;
-          })}
+          <defs>
+            <clipPath id="chart-viewport-clip">
+              <rect x={leftMargin} y={0} width={drawableWidth} height={chartHeight} />
+            </clipPath>
+          </defs>
+
+          {/* Subtle Vertical Grid Lines (Matches Picture 2) wrapped in viewport clip */}
+          <g clipPath="url(#chart-viewport-clip)">
+            {visibleCandles.map((c, idx) => {
+              if (idx % Math.round(zoomLevel / 7) === 0) {
+                const x = getX(idx);
+                return (
+                  <line
+                    key={`v-grid-${idx}`}
+                    x1={x}
+                    y1={20}
+                    x2={x}
+                    y2={330}
+                    stroke="#1f2937"
+                    strokeWidth="0.5"
+                    strokeOpacity="0.2"
+                    strokeDasharray="2 3"
+                  />
+                );
+              }
+              return null;
+            })}
+          </g>
 
           {/* Chart Horizontal Grid Lines (Bound to Main Candlestick Pane) */}
           {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
@@ -684,104 +719,107 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
             );
           })}
 
-          {/* Time axis labels */}
-          {visibleCandles.map((c, idx) => {
-            if (idx % Math.round(zoomLevel / 5) === 0) {
+          {/* Viewport Clipped Dynamic Layers */}
+          <g clipPath="url(#chart-viewport-clip)">
+            {/* Time axis labels */}
+            {visibleCandles.map((c, idx) => {
+              if (idx % Math.round(zoomLevel / 5) === 0) {
+                const x = getX(idx);
+                return (
+                  <text
+                    key={idx}
+                    x={x}
+                    y={chartHeight - 8}
+                    fill="#4b5563"
+                    textAnchor="middle"
+                    className="font-mono text-[9px]"
+                  >
+                    {c.time}
+                  </text>
+                );
+              }
+              return null;
+            })}
+
+            {/* Candlestick graphics */}
+            {visibleCandles.map((candle, idx) => {
               const x = getX(idx);
+              const openY = getY(candle.open);
+              const closeY = getY(candle.close);
+              const highY = getY(candle.high);
+              const lowY = getY(candle.low);
+
+              const isUp = candle.close >= candle.open;
+              
+              // TradingView Premium Theme Colors
+              const strokeColor = isUp ? '#089981' : '#f23645';
+              const fillColor = isUp ? '#089981' : '#f23645';
+
+              // Custom width adjustment for premium visual balance across viewports
+              const candleWidth = Math.max(3.5, Math.min(13, (drawableWidth / zoomLevel) * 0.72));
+              const bodyHeight = Math.max(1.8, Math.abs(closeY - openY));
+              const bodyY = Math.min(openY, closeY);
+
               return (
-                <text
-                  key={idx}
-                  x={x}
-                  y={chartHeight - 8}
-                  fill="#4b5563"
-                  textAnchor="middle"
-                  className="font-mono text-[9px]"
-                >
-                  {c.time}
-                </text>
+                <g key={idx}>
+                  {/* Wick shadow (High-Low extreme extremes) */}
+                  <line
+                    x1={x}
+                    y1={highY}
+                    x2={x}
+                    y2={lowY}
+                    stroke={strokeColor}
+                    strokeWidth="1.2"
+                  />
+                  {/* Body candle block (Open-Close body) */}
+                  <rect
+                    x={x - candleWidth / 2}
+                    y={bodyY}
+                    width={candleWidth}
+                    height={bodyHeight}
+                    fill={fillColor}
+                    stroke={strokeColor}
+                    strokeWidth="0.5"
+                    className="hover:brightness-125 transition-all"
+                  />
+                </g>
               );
-            }
-            return null;
-          })}
+            })}
 
-          {/* Candlestick graphics */}
-          {visibleCandles.map((candle, idx) => {
-            const x = getX(idx);
-            const openY = getY(candle.open);
-            const closeY = getY(candle.close);
-            const highY = getY(candle.high);
-            const lowY = getY(candle.low);
+            {/* SMA (10) Line (Orange) */}
+            {showMA10 && (
+              <polyline
+                fill="none"
+                stroke="#fbbf24"
+                strokeWidth="1.4"
+                className="opacity-90"
+                points={visibleCandles
+                  .map((_, idx) => {
+                    const ma = getMA(idx, 10);
+                    return ma ? `${getX(idx)},${getY(ma)}` : '';
+                  })
+                  .filter(Boolean)
+                  .join(' ')}
+              />
+            )}
 
-            const isUp = candle.close >= candle.open;
-            
-            // TradingView Premium Theme Colors
-            const strokeColor = isUp ? '#089981' : '#f23645';
-            const fillColor = isUp ? '#089981' : '#f23645';
-
-            // Custom width adjustment for premium visual balance across viewports
-            const candleWidth = Math.max(3.5, Math.min(13, (drawableWidth / zoomLevel) * 0.72));
-            const bodyHeight = Math.max(1.8, Math.abs(closeY - openY));
-            const bodyY = Math.min(openY, closeY);
-
-            return (
-              <g key={idx}>
-                {/* Wick shadow (High-Low extreme extremes) */}
-                <line
-                  x1={x}
-                  y1={highY}
-                  x2={x}
-                  y2={lowY}
-                  stroke={strokeColor}
-                  strokeWidth="1.2"
-                />
-                {/* Body candle block (Open-Close body) */}
-                <rect
-                  x={x - candleWidth / 2}
-                  y={bodyY}
-                  width={candleWidth}
-                  height={bodyHeight}
-                  fill={fillColor}
-                  stroke={strokeColor}
-                  strokeWidth="0.5"
-                  className="hover:brightness-125 transition-all"
-                />
-              </g>
-            );
-          })}
-
-          {/* SMA (10) Line (Orange) */}
-          {showMA10 && (
-            <polyline
-              fill="none"
-              stroke="#fbbf24"
-              strokeWidth="1.4"
-              className="opacity-90"
-              points={visibleCandles
-                .map((_, idx) => {
-                  const ma = getMA(idx, 10);
-                  return ma ? `${getX(idx)},${getY(ma)}` : '';
-                })
-                .filter(Boolean)
-                .join(' ')}
-            />
-          )}
-
-          {/* EMA (20) Line (Purple/Indigo) */}
-          {showEMA20 && (
-            <polyline
-              fill="none"
-              stroke="#8b5cf6"
-              strokeWidth="1.4"
-              className="opacity-95"
-              points={visibleCandles
-                .map((_, idx) => {
-                  const ema = getEMA(idx, 20);
-                  return ema ? `${getX(idx)},${getY(ema)}` : '';
-                })
-                .filter(Boolean)
-                .join(' ')}
-            />
-          )}
+            {/* EMA (20) Line (Purple/Indigo) */}
+            {showEMA20 && (
+              <polyline
+                fill="none"
+                stroke="#8b5cf6"
+                strokeWidth="1.4"
+                className="opacity-95"
+                points={visibleCandles
+                  .map((_, idx) => {
+                    const ema = getEMA(idx, 20);
+                    return ema ? `${getX(idx)},${getY(ema)}` : '';
+                  })
+                  .filter(Boolean)
+                  .join(' ')}
+              />
+            )}
+          </g>
 
           {/* Core Technical Secondary Indicator Pane Section */}
           {/* Horizontal Split-Pane Divider */}
@@ -805,25 +843,29 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
           </text>
 
           {/* Volume Indicator Graph */}
-          {indicator === 'VOLUME' && visibleCandles.map((c, idx) => {
-            const x = getX(idx);
-            const maxVolume = Math.max(...visibleCandles.map(v => v.volume)) || 100;
-            const barHeight = (c.volume / maxVolume) * 50;
-            const y = 330 - barHeight;
-            const barWidth = Math.max(2.5, Math.min(10, (drawableWidth / zoomLevel) * 0.45));
-            const isUp = c.close >= c.open;
-            const barColor = isUp ? 'rgba(8, 153, 129, 0.45)' : 'rgba(242, 54, 69, 0.45)';
-            return (
-              <rect
-                key={`volume-${idx}`}
-                x={x - barWidth / 2}
-                y={y}
-                width={barWidth}
-                height={barHeight}
-                fill={barColor}
-              />
-            );
-          })}
+          {indicator === 'VOLUME' && (
+            <g clipPath="url(#chart-viewport-clip)">
+              {visibleCandles.map((c, idx) => {
+                const x = getX(idx);
+                const maxVolume = Math.max(...visibleCandles.map(v => v.volume)) || 100;
+                const barHeight = (c.volume / maxVolume) * 50;
+                const y = 330 - barHeight;
+                const barWidth = Math.max(2.5, Math.min(10, (drawableWidth / zoomLevel) * 0.45));
+                const isUp = c.close >= c.open;
+                const barColor = isUp ? 'rgba(8, 153, 129, 0.45)' : 'rgba(242, 54, 69, 0.45)';
+                return (
+                  <rect
+                    key={`volume-${idx}`}
+                    x={x - barWidth / 2}
+                    y={y}
+                    width={barWidth}
+                    height={barHeight}
+                    fill={barColor}
+                  />
+                );
+              })}
+            </g>
+          )}
 
           {/* RSI (Relative Strength Index) Graph */}
           {indicator === 'RSI' && (() => {
@@ -850,16 +892,18 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
                 <text x={chartWidth - rightMargin + 5} y={y50 + 3} fill="#4b5563" className="font-mono text-[7px]">50</text>
                 <text x={chartWidth - rightMargin + 5} y={y30 + 3} fill="#8b5cf6" className="font-mono text-[7px] font-bold">30 (OS)</text>
 
-                <polyline
-                  fill="none"
-                  stroke="#a78bfa"
-                  strokeWidth="1.35"
-                  points={visibleCandles.map((_, idx) => {
-                    const rsiVal = getRSI(idx, 14);
-                    const rsiY = 330 - (rsiVal / 100) * 60;
-                    return `${getX(idx)},${rsiY}`;
-                  }).join(' ')}
-                />
+                <g clipPath="url(#chart-viewport-clip)">
+                  <polyline
+                    fill="none"
+                    stroke="#a78bfa"
+                    strokeWidth="1.35"
+                    points={visibleCandles.map((_, idx) => {
+                      const rsiVal = getRSI(idx, 14);
+                      const rsiY = 330 - (rsiVal / 100) * 60;
+                      return `${getX(idx)},${rsiY}`;
+                    }).join(' ')}
+                  />
+                </g>
               </g>
             );
           })()}
@@ -875,37 +919,39 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
               <g>
                 <line x1={leftMargin} y1={300} x2={chartWidth - rightMargin} y2={300} stroke="#1f2937" strokeWidth="0.5" />
                 
-                {macdValues.map((v, idx) => {
-                  const x = getX(idx);
-                  const histY = getMacdY(v.hist);
-                  const isUp = v.hist >= 0;
-                  const barColor = isUp ? 'rgba(8, 153, 129, 0.45)' : 'rgba(242, 54, 69, 0.45)';
-                  const barWidth = Math.max(1.5, Math.min(6, (drawableWidth / zoomLevel) * 0.4));
-                  return (
-                    <rect
-                      key={`macd-${idx}`}
-                      x={x - barWidth / 2}
-                      y={isUp ? histY : 300}
-                      width={barWidth}
-                      height={Math.max(1, Math.abs(300 - histY))}
-                      fill={barColor}
-                    />
-                  );
-                })}
+                <g clipPath="url(#chart-viewport-clip)">
+                  {macdValues.map((v, idx) => {
+                    const x = getX(idx);
+                    const histY = getMacdY(v.hist);
+                    const isUp = v.hist >= 0;
+                    const barColor = isUp ? 'rgba(8, 153, 129, 0.45)' : 'rgba(242, 54, 69, 0.45)';
+                    const barWidth = Math.max(1.5, Math.min(6, (drawableWidth / zoomLevel) * 0.4));
+                    return (
+                      <rect
+                        key={`macd-${idx}`}
+                        x={x - barWidth / 2}
+                        y={isUp ? histY : 300}
+                        width={barWidth}
+                        height={Math.max(1, Math.abs(300 - histY))}
+                        fill={barColor}
+                      />
+                    );
+                  })}
 
-                <polyline
-                  fill="none"
-                  stroke="#06b6d4"
-                  strokeWidth="1.2"
-                  points={visibleCandles.map((_, idx) => `${getX(idx)},${getMacdY(macdValues[idx].macd)}`).join(' ')}
-                />
+                  <polyline
+                    fill="none"
+                    stroke="#06b6d4"
+                    strokeWidth="1.2"
+                    points={visibleCandles.map((_, idx) => `${getX(idx)},${getMacdY(macdValues[idx].macd)}`).join(' ')}
+                  />
 
-                <polyline
-                  fill="none"
-                  stroke="#f97316"
-                  strokeWidth="1.2"
-                  points={visibleCandles.map((_, idx) => `${getX(idx)},${getMacdY(macdValues[idx].signal)}`).join(' ')}
-                />
+                  <polyline
+                    fill="none"
+                    stroke="#f97316"
+                    strokeWidth="1.2"
+                    points={visibleCandles.map((_, idx) => `${getX(idx)},${getMacdY(macdValues[idx].signal)}`).join(' ')}
+                  />
+                </g>
               </g>
             );
           })()}

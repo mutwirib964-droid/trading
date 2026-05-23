@@ -556,8 +556,10 @@ export default function App() {
       }
 
       if (synced) {
-        // Preserve prior trading state, demo positions, and other data if logging into the same email
-        const oldSession = localStorage.getItem('vfx_user_session');
+        // Restore from granular, email-specific secure database backups to prevent lost status/opened trades
+        const emailLower = synced.email.toLowerCase();
+        const savedBackupStr = localStorage.getItem(`vfx_backup_${emailLower}`);
+        
         let oldPositions: Position[] = [];
         let oldDemoPositions: Position[] = [];
         let oldDemoBalance = 10000;
@@ -566,20 +568,68 @@ export default function App() {
         let oldCopy = 0;
         let oldProfits = 0;
         let oldAccountMode: 'REAL' | 'DEMO' = 'REAL';
-        if (oldSession) {
+        let oldKyc: 'unverified' | 'pending' | 'verified' = 'unverified';
+        let oldTx: Transaction[] = [];
+        let oldCopiedAlloc: Record<string, number> = {};
+        let oldStakingSub: any[] = [];
+
+        if (savedBackupStr) {
           try {
-            const parsed = JSON.parse(oldSession);
-            if (parsed.email && parsed.email.toLowerCase() === synced.email.toLowerCase()) {
-              oldPositions = parsed.activePositions || [];
-              oldDemoPositions = parsed.demoPositions || [];
-              oldDemoBalance = parsed.demoBalance ?? 10000;
-              oldDemoProfits = parsed.demoProfits ?? 0;
-              oldInvested = parsed.investedCapital ?? 0;
-              oldCopy = parsed.copyTradingAllocated ?? 0;
-              oldProfits = parsed.profits ?? 0;
-              oldAccountMode = parsed.accountMode || 'REAL';
+            const backup = JSON.parse(savedBackupStr);
+            if (backup.user) {
+              oldPositions = backup.user.activePositions || [];
+              oldDemoPositions = backup.user.demoPositions || [];
+              oldDemoBalance = backup.user.demoBalance ?? 10000;
+              oldDemoProfits = backup.user.demoProfits ?? 0;
+              oldInvested = backup.user.investedCapital ?? 0;
+              oldCopy = backup.user.copyTradingAllocated ?? 0;
+              oldProfits = backup.user.profits ?? 0;
+              oldAccountMode = backup.user.accountMode || 'REAL';
+              oldKyc = backup.user.isKycVerified || 'unverified';
             }
-          } catch(e) {}
+            if (backup.transactions) {
+              oldTx = backup.transactions;
+            }
+            if (backup.copiedTraderAllocations) {
+              oldCopiedAlloc = backup.copiedTraderAllocations;
+            }
+            if (backup.activeStakingSubscriptions) {
+              oldStakingSub = backup.activeStakingSubscriptions;
+            }
+          } catch (e) {
+            console.error("Error reading saved user account data cache:", e);
+          }
+        } else {
+          // Fallback to legacy shared session storage state if email matches perfectly
+          const oldSession = localStorage.getItem('vfx_user_session');
+          if (oldSession) {
+            try {
+              const parsed = JSON.parse(oldSession);
+              if (parsed.email && parsed.email.toLowerCase() === emailLower) {
+                oldPositions = parsed.activePositions || [];
+                oldDemoPositions = parsed.demoPositions || [];
+                oldDemoBalance = parsed.demoBalance ?? 10000;
+                oldDemoProfits = parsed.demoProfits ?? 0;
+                oldInvested = parsed.investedCapital ?? 0;
+                oldCopy = parsed.copyTradingAllocated ?? 0;
+                oldProfits = parsed.profits ?? 0;
+                oldAccountMode = parsed.accountMode || 'REAL';
+                oldKyc = parsed.isKycVerified || 'unverified';
+              }
+            } catch (e) {}
+          }
+          const savedTransactions = localStorage.getItem('vfx_transactions_ledger');
+          const savedCopiedAlloc = localStorage.getItem('vfx_copied_allocations');
+          const savedStakingSub = localStorage.getItem('vfx_staking_subs');
+          if (savedTransactions) {
+            try { oldTx = JSON.parse(savedTransactions); } catch (e) {}
+          }
+          if (savedCopiedAlloc) {
+            try { oldCopiedAlloc = JSON.parse(savedCopiedAlloc); } catch (e) {}
+          }
+          if (savedStakingSub) {
+            try { oldStakingSub = JSON.parse(savedStakingSub); } catch (e) {}
+          }
         }
 
         const isAdmin = synced.role === 'admin' || synced.email.toLowerCase() === 'mutwirib964@gmail.com' || userUid === 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99';
@@ -594,7 +644,7 @@ export default function App() {
           profits: oldProfits,
           copyTradingAllocated: oldCopy,
           activePositions: oldPositions,
-          isKycVerified: isAdmin ? 'verified' : 'unverified',
+          isKycVerified: isAdmin ? 'verified' : oldKyc,
           accountMode: oldAccountMode,
           demoBalance: oldDemoBalance,
           demoPositions: oldDemoPositions,
@@ -602,7 +652,7 @@ export default function App() {
           phone: synced.phone || ""
         };
 
-        const setupTx: Transaction[] = synced.walletBalance > 0 ? [
+        const setupTx: Transaction[] = (oldTx && oldTx.length > 0) ? oldTx : (synced.walletBalance > 0 ? [
           {
             id: 't-init',
             type: 'DEPOSIT',
@@ -611,9 +661,11 @@ export default function App() {
             date: new Date().toISOString(),
             status: 'COMPLETED'
           }
-        ] : [];
+        ] : []);
 
-        persistState(initialUser, setupTx, supportTickets, {}, []);
+        // Re-write to state + local storage so everything connects
+        persistState(initialUser, setupTx, supportTickets, oldCopiedAlloc, oldStakingSub);
+        
         if (isAdmin) {
           setActiveTab('ADMIN');
         } else {
@@ -629,13 +681,20 @@ export default function App() {
   };
 
   const handleSignOut = () => {
-    localStorage.removeItem('vfx_user_session');
-    localStorage.removeItem('vfx_transactions_ledger');
-    localStorage.removeItem('vfx_support_tickets_ledger');
-    localStorage.removeItem('vfx_copied_allocations');
-    localStorage.removeItem('vfx_staking_subs');
+    // Save current active, running trade/copies/yield states to persistent backup matching current account
+    if (user.loggedIn && user.email) {
+      const emailLower = user.email.toLowerCase();
+      const backupDetails = {
+        user: user,
+        transactions: transactionsRef.current,
+        supportTickets: supportTicketsRef.current,
+        copiedTraderAllocations: copiedTraderAllocationsRef.current,
+        activeStakingSubscriptions: activeStakingSubscriptionsRef.current
+      };
+      localStorage.setItem(`vfx_backup_${emailLower}`, JSON.stringify(backupDetails));
+    }
 
-    setUser({
+    const loggedOutUserObj: User = {
       loggedIn: false,
       email: '',
       name: '',
@@ -649,7 +708,15 @@ export default function App() {
       demoBalance: 10000,
       demoPositions: [],
       demoProfits: 0
-    });
+    };
+
+    localStorage.setItem('vfx_user_session', JSON.stringify(loggedOutUserObj));
+    localStorage.removeItem('vfx_transactions_ledger');
+    localStorage.removeItem('vfx_support_tickets_ledger');
+    localStorage.removeItem('vfx_copied_allocations');
+    localStorage.removeItem('vfx_staking_subs');
+
+    setUser(loggedOutUserObj);
     setTransactions([]);
     setSupportTickets(MOCK_SUPPORT_TICKETS);
     setCopiedTraderAllocations({});
