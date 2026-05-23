@@ -102,8 +102,8 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
                     />
                     <div>
                       <h4 className="text-white text-xs font-bold font-sans">{trader.name}</h4>
-                      <p className="text-[8.5px] text-emerald-400 font-mono tracking-wide uppercase font-black">
-                        WIN RATE: {trader.winRate}%
+                      <p className={`text-[8.5px] font-mono tracking-wide uppercase font-black ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded inline-block'}`}>
+                        WIN RATE: {user.role === 'marketer' ? trader.winRate.toFixed(1) : (trader.winRate * 0.28).toFixed(1)}%
                       </p>
                     </div>
                   </div>
@@ -243,7 +243,15 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
                 <div className="bg-[#121826]/40 p-3 rounded-lg border border-gray-800/60 font-sans text-[11px] leading-relaxed text-gray-400 space-y-1">
                   <div className="flex justify-between font-mono text-[10px]">
                     <span>Expected ROI Performance:</span>
-                    <span className="text-emerald-400 font-bold">~{selectedTrader.roi}% / Yr</span>
+                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450'}`}>
+                      {user.role === 'marketer' ? `~${selectedTrader.roi}% / Yr` : `~-${(selectedTrader.roi * 0.4).toFixed(1)}% / Yr Decaying`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-mono text-[10px]">
+                    <span>Expected Win Rate:</span>
+                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded'}`}>
+                      {user.role === 'marketer' ? `${selectedTrader.winRate}%` : `${(selectedTrader.winRate * 0.28).toFixed(1)}%`}
+                    </span>
                   </div>
                   <div className="flex justify-between font-mono text-[10px]">
                     <span>Contract Terms:</span>

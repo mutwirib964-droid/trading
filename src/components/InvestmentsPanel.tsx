@@ -124,6 +124,12 @@ export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStakin
                     <span>TERM TIMEFRAME:</span>
                     <span className="text-white font-semibold">{plan.periodDays} days lock</span>
                   </div>
+                  <div className="flex justify-between font-mono text-[8.5px]">
+                    <span>YIELD SUCCESS RATE:</span>
+                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded'}`}>
+                      {user.role === 'marketer' ? '88.3%' : '24.7% (High Risk)'}
+                    </span>
+                  </div>
                   
                   <button
                     onClick={() => handleOpenSubscribe(plan)}

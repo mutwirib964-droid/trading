@@ -1,193 +1,136 @@
--- ==========================================
--- VEXCOINFX PREMIUM SUPABASE DATABASE SETUP
--- ==========================================
--- This script provisions the required tables for users profiles, trades,
--- and financial transactions with Row-Level Security (RLS) policies.
--- Run this in your Supabase SQL Editor.
+-- VexcoinFX Supabase Setup & Administration Query Ledger
+-- Copy and run this script inside your Supabase dashboard SQL Editor (https://supabase.com) 
+-- to configure database tables, set up exclusive administrator rights for mutwirib964@gmail.com,
+-- and establish strong, failsafe Row Level Security (RLS) policies.
 
--- 1. EXTENSIONS
-create extension if not exists "uuid-ossp";
-
--- 2. CREATE PROFILES TABLE
-alter table public.profiles add column if not exists phone varchar;
-
-create table if not exists public.profiles (
-    email varchar primary key,
-    name varchar not null,
-    phone varchar,
-    role varchar not null default 'user' check (role in ('user', 'marketer', 'admin')),
-    wallet_balance numeric(18, 4) not null default 0.0000, -- starts at 0 for real account
-    invested_capital numeric(18, 4) not null default 0.0000,
-    profits numeric(18, 4) not null default 0.0000,
-    copy_trading_allocated numeric(18, 4) not null default 0.0000,
-    is_kyc_verified varchar not null default 'unverified' check (is_kyc_verified in ('unverified', 'pending', 'verified')),
-    kyc_doc_type varchar,
-    kyc_uploaded_at timestamp with time zone,
-    account_mode varchar not null default 'REAL' check (account_mode in ('REAL', 'DEMO')),
-    demo_wallet_balance numeric(18, 4) not null default 10000.0000,
-    demo_profits numeric(18, 4) not null default 0.0000,
-    created_at timestamp with time zone not null default now(),
-    updated_at timestamp with time zone not null default now()
+-- 1. Ensure the profiles table exists (if it doesn't already)
+CREATE TABLE IF NOT EXISTS public.profiles (
+    email TEXT UNIQUE NOT NULL
 );
 
--- Indexing for speed
-create index if not exists idx_profiles_role on public.profiles(role);
+-- Dynamically add all expected columns to the profiles table to prevent errors in pre-existing tables!
+-- This ensures that if you already have a table 'profiles', PostgreSQL will safely add the missing columns without breaking anything.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS id UUID;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS total_deposited NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_kyc_verified TEXT DEFAULT 'unverified';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_wallet_balance NUMERIC(15, 4) DEFAULT 10000.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
--- 3. CREATE TRANSACTIONS LEGER TABLE
-create table if not exists public.transactions (
-    id varchar primary key,
-    user_email varchar not null references public.profiles(email) on delete cascade,
-    type varchar not null check (type in ('DEPOSIT', 'WITHDRAWAL', 'INVEST', 'REDEEM', 'COPY_ALLOCATE', 'COPY_RELEASE')),
-    amount numeric(18, 4) not null,
-    asset varchar not null,
-    address varchar,
-    status varchar not null check (status in ('PENDING', 'COMPLETED', 'REJECTED')),
-    created_at timestamp with time zone not null default now()
+-- 2. Ensure the transactions table exists (if it doesn't already)
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text
 );
 
-create index if not exists idx_transactions_user on public.transactions(user_email);
-create index if not exists idx_transactions_status on public.transactions(status);
+-- Dynamically add all expected columns to the transactions table to prevent errors in pre-existing tables!
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS user_email TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS amount NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS asset TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
--- 4. CREATE TRADES LEDGER TABLE
-create table if not exists public.trades (
-    id varchar primary key,
-    user_email varchar not null references public.profiles(email) on delete cascade,
-    asset_symbol varchar not null,
-    asset_name varchar not null,
-    type varchar not null check (type in ('BUY', 'SELL')),
-    entry_price numeric(18, 6) not null,
-    current_price numeric(18, 6) not null,
-    amount numeric(18, 4) not null,
-    leverage numeric(10, 2) not null default 1.00,
-    margin numeric(18, 4) not null,
-    pnl numeric(18, 4) not null default 0.0000,
-    status varchar not null check (status in ('OPEN', 'CLOSED')),
-    account_mode varchar not null check (account_mode in ('REAL', 'DEMO')),
-    created_at timestamp with time zone not null default now()
+-- Enable Row Level Security (RLS) to protect client ledger records
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
+-- 3. Clean out any conflicting security policies for fresh installation
+DROP POLICY IF EXISTS "Allow user read access to own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Allow user update access to own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Allow administrative full read access" ON public.profiles;
+DROP POLICY IF EXISTS "Allow administrative full write access" ON public.profiles;
+
+DROP POLICY IF EXISTS "Allow user read own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Allow user insert own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Allow administrative read all transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Allow administrative full transactions access" ON public.transactions;
+
+-- 4. Create strong, granular Row Level Security (RLS) policies
+
+-- Profiles Policies
+CREATE POLICY "Allow user read access to own profile"
+ON public.profiles FOR SELECT
+USING (auth.uid() = id);
+
+CREATE POLICY "Allow user update access to own profile"
+ON public.profiles FOR UPDATE
+USING (auth.uid() = id)
+WITH CHECK (
+  auth.uid() = id 
+  AND (
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
+    OR (
+      role = (SELECT role FROM public.profiles WHERE id = auth.uid())
+      AND wallet_balance = (SELECT wallet_balance FROM public.profiles WHERE id = auth.uid())
+      AND total_deposited = (SELECT total_deposited FROM public.profiles WHERE id = auth.uid())
+    )
+  )
 );
 
-create index if not exists idx_trades_user on public.trades(user_email);
-create index if not exists idx_trades_status_mode on public.trades(status, account_mode);
-
--- Enable Row-Level Security (RLS) on all tables to prevent bypassing
-alter table public.profiles enable row level security;
-alter table public.transactions enable row level security;
-alter table public.trades enable row level security;
-
--- ==========================================
--- ROW-LEVEL SECURITY (RLS) POLICIES
--- ==========================================
-
--- Helper function to check if the caller is an Admin
-create or replace function public.is_admin(caller_email text)
-returns boolean as $$
-begin
-    return exists (
-        select 1 from public.profiles 
-        where email = ltrim(rtrim(lower(caller_email))) 
-          and role = 'admin'
-    );
-end;
-$$ language plpgsql security definer;
-
--- --- PROFILES POLICIES ---
-
--- Allow everyone to check/register their initial profile row
-drop policy if exists "Allow profile insertion during registration" on public.profiles;
-create policy "Allow profile insertion during registration"
-on public.profiles for insert
-with check (true);
-
--- Users can read their own profile; admins can read any profile
-drop policy if exists "Allow read for self or administrator" on public.profiles;
-create policy "Allow read for self or administrator"
-on public.profiles for select
-using (
-    auth.jwt() ->> 'email' = email 
-    or public.is_admin(auth.jwt() ->> 'email')
+CREATE POLICY "Allow administrative full read access"
+ON public.profiles FOR SELECT
+USING (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 );
 
--- Users can update non-critical aspects of their profile (like kyc updates or demo balances); 
--- Admin can update anything (balances, roles, verification states)
-drop policy if exists "Allow update for self or administrator" on public.profiles;
-create policy "Allow update for self or administrator"
-on public.profiles for update
-using (
-    auth.jwt() ->> 'email' = email 
-    or public.is_admin(auth.jwt() ->> 'email')
+CREATE POLICY "Allow administrative full write access"
+ON public.profiles FOR ALL
+USING (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 )
-with check (
-    auth.jwt() ->> 'email' = email 
-    or public.is_admin(auth.jwt() ->> 'email')
+WITH CHECK (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 );
 
--- --- TRANSACTIONS POLICIES ---
-
--- Allow users to create transaction requests
-drop policy if exists "Allow users to submit transactions" on public.transactions;
-create policy "Allow users to submit transactions"
-on public.transactions for insert
-with check (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
+-- Transactions Policies
+CREATE POLICY "Allow user read own transactions"
+ON public.transactions FOR SELECT
+USING (
+  auth.uid() IN (SELECT id FROM public.profiles WHERE email = user_email OR email = public.transactions.email)
 );
 
--- Users can read their own transactions ledger; administrators can read all
-drop policy if exists "Allow transaction reading for self or administrator" on public.transactions;
-create policy "Allow transaction reading for self or administrator"
-on public.transactions for select
-using (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
+CREATE POLICY "Allow user insert own transactions"
+ON public.transactions FOR INSERT
+WITH CHECK (
+  auth.uid() IN (SELECT id FROM public.profiles WHERE email = user_email OR email = public.transactions.email)
 );
 
--- Only Administrators can alter or delete transaction records (to secure bookkeeping logs)
-drop policy if exists "Allow transactions update for administrator only" on public.transactions;
-create policy "Allow transactions update for administrator only"
-on public.transactions for update
-using (public.is_admin(auth.jwt() ->> 'email'))
-with check (public.is_admin(auth.jwt() ->> 'email'));
-
--- --- TRADES POLICIES ---
-
--- Allow users to open trades
-drop policy if exists "Allow trade insertion" on public.trades;
-create policy "Allow trade insertion"
-on public.trades for insert
-with check (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
+CREATE POLICY "Allow administrative read all transactions"
+ON public.transactions FOR SELECT
+USING (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 );
 
--- Users can read their own trades; administrators can read all
-drop policy if exists "Allow trade read for self or administrator" on public.trades;
-create policy "Allow trade read for self or administrator"
-on public.trades for select
-using (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
-);
-
--- Users can close their own trades (update state); administrators can modify any trade parameters
-drop policy if exists "Allow trade updates for self or administrator" on public.trades;
-create policy "Allow trade updates for self or administrator"
-on public.trades for update
-using (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
+CREATE POLICY "Allow administrative full transactions access"
+ON public.transactions FOR ALL
+USING (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 )
-with check (
-    auth.jwt() ->> 'email' = user_email
-    or public.is_admin(auth.jwt() ->> 'email')
+WITH CHECK (
+  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
 );
 
--- ==========================================================
--- SEEDING DEFAULT ADMINISTRATOR RULES
--- ==========================================================
--- To initiate the specified administrator instantly, we pre-assign their role.
--- When the user with email 'mutwirib964@gmail.com' registers or logs in, 
--- their record will have the default 'admin' role, enabling full capabilities.
-
-insert into public.profiles (email, name, role, wallet_balance, is_kyc_verified)
-values ('mutwirib964@gmail.com', 'Admin Mutwiri', 'admin', 0.0000, 'verified')
-on conflict (email) do update set role = 'admin', is_kyc_verified = 'verified';
+-- 5. Set up the exclusive administrative credentials securely
+-- This forces mutwirib964@gmail.com with UID ccd28f9c-f070-455e-9cdb-e4ee2f26ac99 directly into the 'admin' database role state.
+INSERT INTO public.profiles (id, email, name, role, wallet_balance, is_kyc_verified, updated_at)
+VALUES (
+  'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99', 
+  'mutwirib964@gmail.com', 
+  'MUTWIRI ADMIN', 
+  'admin', 
+  1000.0000, 
+  'verified', 
+  timezone('utc'::text, now())
+)
+ON CONFLICT (email) 
+DO UPDATE SET 
+  id = EXCLUDED.id,
+  role = 'admin',
+  is_kyc_verified = 'verified',
+  updated_at = timezone('utc'::text, now());

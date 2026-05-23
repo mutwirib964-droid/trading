@@ -36,7 +36,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/admin/overview");
+      const r = await fetch(`/api/admin/overview?adminEmail=${encodeURIComponent(currentUser.email)}&adminUid=${encodeURIComponent(currentUser.id || '')}`);
       if (r.ok) {
         const d = await r.json();
         setStats(d);
@@ -80,6 +80,8 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          adminEmail: currentUser.email,
+          adminUid: currentUser.id || '',
           email: selectedUserEmail,
           role: editRole,
           wallet_balance: parseFloat(editBalance) || 0
@@ -120,6 +122,8 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          adminEmail: currentUser.email,
+          adminUid: currentUser.id || '',
           email: sandboxEmail,
           amount_usd: parseFloat(sandboxAmount) || 20
         })

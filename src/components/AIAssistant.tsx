@@ -17,7 +17,7 @@ export default function AIAssistant({ activeAsset }: AIAssistantProps) {
   const [inputMsg, setInputMsg] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Initialize with a premium intro message from the chief market strategist
   useEffect(() => {
@@ -41,7 +41,9 @@ How can I optimize your capital today? Take advantage of our quick technical ana
 
   // Adjust scroll lock on messages list addition
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
   }, [messages, isGenerating]);
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -145,7 +147,7 @@ Recommended Strategy for **${activeAsset.symbol}** (Simulated fallback):
       </div>
 
       {/* Message history */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5 select-text">
+      <div ref={containerRef} className="flex-1 overflow-y-auto p-3 space-y-2.5 select-text">
         {messages.map((m, idx) => (
           <div
             key={idx}
@@ -195,8 +197,6 @@ Recommended Strategy for **${activeAsset.symbol}** (Simulated fallback):
             <span>{errorText}</span>
           </div>
         )}
-
-        <div ref={scrollRef} />
       </div>
 
       {/* Quick Access Prompt Chips */}

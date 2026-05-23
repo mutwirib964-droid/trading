@@ -319,9 +319,8 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     </p>
                   </div>
 
-                  <div className="bg-gray-950 border border-gray-800 px-3 py-1.5 rounded text-xxs font-bold text-amber-500">
-                    PIN EXPIRY COUNTDOWN: {pollSecondsLeft}s
-                  </div>
+
+                  {/* Countdown tracker is hidden as immediate API feedback is active */}
 
 
                 </div>

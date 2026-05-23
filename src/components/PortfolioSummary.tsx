@@ -9,8 +9,11 @@ interface PortfolioSummaryProps {
 }
 
 export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }: PortfolioSummaryProps) {
-  const totalWealth = user.walletBalance + user.investedCapital + user.copyTradingAllocated;
-  const netEarnings = user.profits;
+  const isDemo = user.accountMode === 'DEMO';
+  const totalWealth = isDemo 
+    ? (user.demoBalance ?? 10000)
+    : user.walletBalance + user.investedCapital + user.copyTradingAllocated;
+  const netEarnings = isDemo ? (user.demoProfits ?? 0) : user.profits;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -27,25 +30,27 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
 
         <div className="space-y-0.5">
           <h2 className="text-white text-xl md:text-2xl font-bold font-mono tracking-tight">
-            ${user.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${(isDemo ? (user.demoBalance ?? 10000) : user.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </h2>
           <div className="flex items-center gap-1 text-[9px] text-gray-500 font-mono uppercase tracking-wider">
-            <span>PREMIUM TRADING</span>
-            <div className="w-1 h-1 rounded-full bg-emerald-500" />
-            <span className="text-emerald-400">SECURED</span>
+            <span>{isDemo ? "PRACTICE MARGIN" : "PREMIUM TRADING"}</span>
+            <div className={`w-1 h-1 rounded-full ${isDemo ? "bg-amber-400" : "bg-emerald-500"}`} />
+            <span className={isDemo ? "text-amber-400" : "text-emerald-400"}>{isDemo ? "SIMULATED" : "SECURED"}</span>
           </div>
         </div>
 
         <div className="flex gap-2 mt-3">
           <button
             onClick={onOpenDeposit}
-            className="flex-1 py-1 text-center text-[10px] uppercase tracking-wide font-extrabold rounded bg-emerald-500 hover:bg-emerald-400 text-[#0b0f19] cursor-pointer transition-all"
+            disabled={isDemo}
+            className="flex-1 py-1 text-center text-[10px] uppercase tracking-wide font-extrabold rounded bg-emerald-500 disabled:opacity-30 hover:bg-emerald-400 text-[#0b0f19] cursor-pointer transition-all"
           >
             Deposit Funds
           </button>
           <button
             onClick={onOpenWithdraw}
-            className="flex-1 py-1 text-center text-[10px] uppercase tracking-wide font-extrabold rounded bg-gray-900 hover:bg-gray-800 border border-gray-800 text-white cursor-pointer transition-all"
+            disabled={isDemo}
+            className="flex-1 py-1 text-center text-[10px] uppercase tracking-wide font-extrabold rounded bg-gray-900 disabled:opacity-30 hover:bg-gray-800 border border-gray-800 text-white cursor-pointer transition-all"
           >
             Withdraw Balance
           </button>
@@ -73,35 +78,43 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             {/* ProgressBar Row */}
             <div className="w-full bg-gray-950 h-2 rounded-full overflow-hidden flex">
               <div 
-                style={{ width: `${(user.walletBalance / (totalWealth || 1)) * 100}%` }} 
-                className="bg-emerald-500 h-full"
+                style={{ width: `${isDemo ? 100 : (user.walletBalance / (totalWealth || 1)) * 100}%` }} 
+                className={isDemo ? "bg-amber-500 h-full" : "bg-emerald-500 h-full"}
                 title="Wallet Balance"
               />
-              <div 
-                style={{ width: `${(user.copyTradingAllocated / (totalWealth || 1)) * 100}%` }} 
-                className="bg-blue-400 h-full"
-                title="Copy Trading"
-              />
-              <div 
-                style={{ width: `${(user.investedCapital / (totalWealth || 1)) * 100}%` }} 
-                className="bg-amber-400 h-full"
-                title="Invested Yields"
-              />
+              {!isDemo && (
+                <>
+                  <div 
+                    style={{ width: `${(user.copyTradingAllocated / (totalWealth || 1)) * 100}%` }} 
+                    className="bg-blue-400 h-full"
+                    title="Copy Trading"
+                  />
+                  <div 
+                    style={{ width: `${(user.investedCapital / (totalWealth || 1)) * 100}%` }} 
+                    className="bg-amber-400 h-full"
+                    title="Invested Yields"
+                  />
+                </>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-1.5 text-[8.5px] text-gray-500 mt-1">
-              <div className="flex items-center gap-1 truncate">
-                <div className="w-1.5 h-1.5 rounded bg-emerald-500 shrink-0" />
-                <span className="truncate">Wallet ({Math.round((user.walletBalance / (totalWealth || 1)) * 100)}%)</span>
+              <div className="flex items-center gap-1 truncate col-span-1">
+                <div className={`w-1.5 h-1.5 rounded shrink-0 ${isDemo ? "bg-amber-500" : "bg-emerald-500"}`} />
+                <span className="truncate">{isDemo ? 'Demo Balance' : `Wallet (${Math.round((user.walletBalance / (totalWealth || 1)) * 100)}%)`}</span>
               </div>
-              <div className="flex items-center gap-1 truncate">
-                <div className="w-1.5 h-1.5 rounded bg-blue-400 shrink-0" />
-                <span className="truncate">Copy ({Math.round((user.copyTradingAllocated / (totalWealth || 1)) * 100)}%)</span>
-              </div>
-              <div className="flex items-center gap-1 truncate">
-                <div className="w-1.5 h-1.5 rounded bg-amber-400 shrink-0" />
-                <span className="truncate">Earn ({Math.round((user.investedCapital / (totalWealth || 1)) * 100)}%)</span>
-              </div>
+              {!isDemo && (
+                <>
+                  <div className="flex items-center gap-1 truncate col-span-1">
+                    <div className="w-1.5 h-1.5 rounded bg-blue-400 shrink-0" />
+                    <span className="truncate">Copy ({Math.round((user.copyTradingAllocated / (totalWealth || 1)) * 100)}%)</span>
+                  </div>
+                  <div className="flex items-center gap-1 truncate col-span-1">
+                    <div className="w-1.5 h-1.5 rounded bg-amber-400 shrink-0" />
+                    <span className="truncate">Earn ({Math.round((user.investedCapital / (totalWealth || 1)) * 100)}%)</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -121,15 +134,15 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             <h3 className={`text-xl md:text-2xl font-bold font-mono tracking-tight ${netEarnings >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {netEarnings >= 0 ? '+' : ''}${netEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </h3>
-            <p className="text-[9px] font-mono text-gray-500 uppercase">REALIZED NET PROFIT</p>
+            <p className="text-[9px] font-mono text-gray-500 uppercase">{isDemo ? "PRACTICE PERFORMANCE" : "REALIZED NET PROFIT"}</p>
           </div>
 
-          <div className="flex items-center justify-between bg-gray-900/60 p-2 rounded border border-gray-800/80 text-[9px] font-mono">
+          <div className="flex items-center justify-between bg-gray-900/60 p-2 rounded border border-gray-850 text-[9px] font-mono">
             <div className="flex items-center gap-1 text-gray-400">
               <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
-              <span>Copy trading yield:</span>
+              <span>{isDemo ? "Demo simulator:" : "Copy trading yield:"}</span>
             </div>
-            <span className="text-emerald-400 font-bold">+2.48% (24H)</span>
+            <span className="text-emerald-400 font-bold">{isDemo ? "ACTIVE" : "+2.48% (24H)"}</span>
           </div>
         </div>
       </div>
