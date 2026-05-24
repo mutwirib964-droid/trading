@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
@@ -11,6 +10,15 @@ export const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Normalize incoming URLs from Netlify Functions redirects (e.g., /.netlify/functions/api/user/sync -> /api/user/sync)
+app.use((req, res, next) => {
+  if (req.url && req.url.startsWith('/.netlify/functions/api')) {
+    const subpath = req.url.slice('/.netlify/functions/api'.length);
+    req.url = subpath.startsWith('/') ? `/api${subpath}` : `/api/${subpath}`;
+  }
+  next();
+});
 
 // Initialize Gemini
 let ai: GoogleGenAI | null = null;
@@ -645,10 +653,29 @@ app.get("/api/admin/overview", async (req, res) => {
     const db = getSupabase();
     if (db) {
       const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
-      // query real profile counters via secure RPC to bypass RLS safely
-      const { data: users, error: uErr } = await db.rpc("admin_get_all_profiles", { admin_uid: callerUid });
+      // query real profile counters via secure RPC with a clean direct select fallback to bypass schema-cache faults
+      let { data: users, error: uErr } = await db.rpc("admin_get_all_profiles", { admin_uid: callerUid });
+      
+      if (uErr) {
+        console.warn("[Supabase API] Failed to select from profiles table via RPC, attempting direct select fallback:", uErr.message);
+        const { data: directUsers, error: dErr } = await db.from("profiles").select("*");
+        if (!dErr && directUsers) {
+          users = directUsers;
+          uErr = null; // Clear error state as we successfully retrieved data
+        }
+      }
+
       if (!uErr && users) {
-        const { data: txs } = await db.rpc("admin_get_all_transactions", { admin_uid: callerUid });
+        let txs: any = null;
+        const { data: rpcTxs, error: txErr } = await db.rpc("admin_get_all_transactions", { admin_uid: callerUid });
+        if (!txErr && rpcTxs) {
+          txs = rpcTxs;
+        } else {
+          console.warn("[Supabase API] Failed to select from transactions via RPC, attempting direct select fallback:", txErr?.message);
+          const { data: directTxs } = await db.from("transactions").select("*").order("created_at", { ascending: false });
+          txs = directTxs || [];
+        }
+
         const totalDepositsResult = users.reduce((acc: number, item: any) => acc + (item.total_deposited || 0), 0);
         return res.json({
           offline: false,
@@ -657,8 +684,6 @@ app.get("/api/admin/overview", async (req, res) => {
           users: users,
           transactions: txs || []
         });
-      } else if (uErr) {
-        console.warn("[Supabase API] Failed to select from profiles table via RPC, falling back to memory store:", uErr.message);
       }
     }
 
@@ -702,7 +727,11 @@ app.post("/api/admin/update-user", async (req, res) => {
       // check if they are already marketer to avoid spamming credit
       let alreadyMarketer = false;
       if (db) {
-        const { data: profiles } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: email.toLowerCase().trim() });
+        let { data: profiles, error: pErr } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: email.toLowerCase().trim() });
+        if (pErr || !profiles || profiles.length === 0) {
+          const { data: directProfiles } = await db.from("profiles").select("*").eq("email", email.toLowerCase().trim());
+          profiles = directProfiles;
+        }
         const cur = profiles && profiles[0];
         if (cur && cur.role === 'marketer') {
           alreadyMarketer = true;
@@ -723,8 +752,12 @@ app.post("/api/admin/update-user", async (req, res) => {
 
     if (db) {
       const emailLower = email.toLowerCase().trim();
-      // 1. Fetch current profile values safely via RPC
-      const { data: profiles } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: emailLower });
+      // 1. Fetch current profile values safely via RPC with direct fallback
+      let { data: profiles, error: pErr } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: emailLower });
+      if (pErr || !profiles || profiles.length === 0) {
+        const { data: directProfiles } = await db.from("profiles").select("*").eq("email", emailLower);
+        profiles = directProfiles;
+      }
       const profile = profiles && profiles[0];
       if (profile) {
         let finalBal = wallet_balance !== undefined ? Number(wallet_balance) : profile.wallet_balance;
@@ -759,7 +792,6 @@ app.post("/api/admin/update-user", async (req, res) => {
         }
 
         // Save profile details using RPC security bypass or standard fallback
-        const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
         const { error: rpcErr } = await db.rpc("admin_update_profile", {
           admin_uid: callerUid,
           target_email: emailLower,
@@ -849,7 +881,16 @@ app.post("/api/admin/delete-user", async (req, res) => {
     const db = getSupabase();
     if (db) {
        const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
-       await db.rpc("admin_delete_profile", { admin_uid: callerUid, target_email: emailLower });
+       try {
+         const { error: delRpcErr } = await db.rpc("admin_delete_profile", { admin_uid: callerUid, target_email: emailLower });
+         if (delRpcErr) {
+           console.warn("admin_delete_profile RPC failed, falling back to direct delete:", delRpcErr.message);
+           await db.from("profiles").delete().eq("email", emailLower);
+         }
+       } catch (delEx: any) {
+         console.warn("admin_delete_profile RPC threw error, falling back to direct delete:", delEx.message);
+         await db.from("profiles").delete().eq("email", emailLower);
+       }
     }
     const idx = memoryUsers.findIndex(u => u.email.toLowerCase() === emailLower);
     if (idx !== -1) {
@@ -922,6 +963,7 @@ Remember, don't mention standard AI agent disclaimers like "I'm an AI," present 
 async function startServer() {
   // Setup Vite middleware
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -941,6 +983,14 @@ async function startServer() {
   });
 }
 
-if (!process.env.NETLIFY) {
+const isServerless = !!(
+  process.env.NETLIFY || 
+  process.env.LAMBDA_TASK_ROOT || 
+  process.env.AWS_LAMBDA_FUNCTION_NAME || 
+  process.env.AWS_EXECUTION_ENV ||
+  process.env.CONTEXT
+);
+
+if (!isServerless) {
   startServer();
 }
