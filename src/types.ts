@@ -45,6 +45,8 @@ export interface Position {
   margin: number;
   pnl: number;
   timestamp: string;
+  isDemo?: boolean;
+  accountMode?: 'REAL' | 'DEMO';
 }
 
 export interface Transaction {

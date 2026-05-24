@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Asset } from '../types';
 import { Bot, Sparkles, Send, RefreshCw, AlertCircle, TrendingUp, HelpCircle } from 'lucide-react';
+import { getApiUrl } from '../lib/api';
 
 interface AIAssistantProps {
   activeAsset: Asset;
@@ -63,7 +64,7 @@ How can I optimize your capital today? Take advantage of our quick technical ana
     setIsGenerating(true);
 
     try {
-      const response = await fetch('/api/advisor', {
+      const response = await fetch(getApiUrl('/api/advisor'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -434,4 +434,17 @@ FROM auth.users u
 WHERE LOWER(p.email) = LOWER(u.email) AND p.id IS NULL;
 
 
+-- 9. Explicit Database Access Grants
+-- Ensure standard Supabase roles have complete table and execution level permissions.
+GRANT ALL PRIVILEGES ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+-- Grant column/table level access explicitly for tables to prevent permission denied state
+GRANT ALL PRIVILEGES ON public.profiles TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON public.transactions TO postgres, anon, authenticated, service_role;
+
+
+
 

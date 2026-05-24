@@ -36,7 +36,7 @@ if (process.env.GEMINI_API_KEY) {
 // Lazy Supabase client initialization
 const getSupabase = () => {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) return null;
   try {
     return createClient(url, key, {
@@ -342,10 +342,13 @@ app.get("/api/payhero/check-status", async (req, res) => {
     // Checking in Supabase db as well
     const db = getSupabase();
     if (db) {
-      const { data: profileTx } = await db.from("transactions")
+      const { data: profileTxs } = await db.from("transactions")
         .select("*")
-        .eq("address", `M-Pesa IPN Ref: ${reference}`)
-        .maybeSingle();
+        .or(`address.eq.M-Pesa IPN Ref: ${reference},address.eq.IPN Ref: ${reference},address.like.%${reference}%`)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const profileTx = profileTxs?.[0];
 
       if (profileTx) {
         return res.json({
@@ -461,31 +464,73 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 // Payhero webhook callback
 app.post("/api/payhero/callback", async (req, res) => {
   try {
-    console.log("RECEIVED PAYHERO WEBHOOK CONTRACT:", JSON.stringify(req.body));
-    const { status, external_reference, amount, mpesa_code } = req.body;
+    const body = req.body || {};
+    console.log("RECEIVED PAYHERO WEBHOOK CONTRACT:", JSON.stringify(body));
+
+    // Support nested, lowercase, uppercase properties from PayHero Gateway variants
+    const external_reference = 
+      body.external_reference || 
+      body.ExternalReference || 
+      body.externalReference || 
+      body.external_ref || 
+      body.ExternalRef || 
+      body.ref || 
+      body.Reference ||
+      (body.Response && (body.Response.external_reference || body.Response.ExternalReference)) ||
+      (body.data && (body.data.external_reference || body.data.ExternalReference));
 
     if (!external_reference) {
+      console.warn("Rejected callback because no external_reference was found in raw payload.");
       return res.status(400).json({ error: "No external reference found in webhook payload." });
     }
 
-    // Decode user email
-    const parts = external_reference.split("__");
+    const statusVal = 
+      body.status || 
+      body.Status || 
+      body.ResultCode ||
+      (body.Response && (body.Response.status || body.Response.Status)) ||
+      (body.data && (body.data.status || body.data.Status));
+
+    const amount = 
+      body.amount || 
+      body.Amount || 
+      (body.Response && (body.Response.amount || body.Response.Amount)) ||
+      (body.data && (body.data.amount || body.data.Amount));
+
+    const mpesa_code = 
+      body.mpesa_code || 
+      body.MpesaCode || 
+      body.mpesa_receipt_number || 
+      body.MpesaReceiptNumber || 
+      (body.Response && (body.Response.mpesa_code || body.Response.MpesaReceiptNumber)) ||
+      (body.data && (body.data.mpesa_code || body.data.MpesaReceiptNumber));
+
+    // Decode user email from reference
+    const parts = String(external_reference).split("__");
     const rawEmail = parts[0];
     const email = rawEmail.replace(/_at_/g, "@").replace(/_dot_/g, ".");
+    const emailLower = email.toLowerCase().trim();
 
-    // Payhero status values: "SUCCESSFUL", "SUCCESS", "COMPLETED" or is_success: true
-    const isSuccess = status === "SUCCESS" || status === "SUCCESSFUL" || status === "COMPLETED" || req.body.success === true;
+    // Check success status robustly (ResultCode = "0" means Success in Safaricom, status strings: "SUCCESS", "SUCCESSFUL", "COMPLETED")
+    let isSuccess = false;
+    const statusStr = String(statusVal || "").toUpperCase().trim();
+    if (statusStr === "SUCCESS" || statusStr === "SUCCESSFUL" || statusStr === "COMPLETED" || body.success === true || body.success === "true") {
+      isSuccess = true;
+    }
+    // Explicitly check for Safaricom error result codes if provided
+    if (body.ResultCode !== undefined && String(body.ResultCode) !== "0") {
+      isSuccess = false;
+    }
 
     if (isSuccess) {
       const kesVal = parseFloat(amount) || 0;
       const usdAdded = Number((kesVal / 130).toFixed(2)) || 17;
 
-      console.log(`CALLBACK CLEARANCE: Crediting ${email} with $${usdAdded} USD (from ${kesVal} KES)`);
+      console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
       // 1. Credit Supabase if ONLINE
       const db = getSupabase();
       if (db) {
-        const emailLower = email.toLowerCase().trim();
         // Invoke credit bypass RPC
         const { error: creditRpcErr } = await db.rpc("system_credit_user", {
           secure_token: 'payhero_system_clear_token_vfx',
@@ -532,9 +577,9 @@ app.post("/api/payhero/callback", async (req, res) => {
       }
 
       // 2. Credit memory cache just in case
-      let memUser = memoryUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+      let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
       if (!memUser) {
-        memUser = { id: `user-mem-${Date.now()}`, email, role: "user", wallet_balance: 0, total_deposited: 0 };
+        memUser = { id: `user-mem-${Date.now()}`, email: emailLower, role: "user", wallet_balance: 0, total_deposited: 0 };
         memoryUsers.push(memUser);
       }
       memUser.wallet_balance = Number((memUser.wallet_balance + usdAdded).toFixed(2));
@@ -549,7 +594,7 @@ app.post("/api/payhero/callback", async (req, res) => {
       } else {
         memoryTransactions.push({
           id: `tx-fin-${Date.now()}`,
-          email,
+          email: emailLower,
           type: "DEPOSIT",
           amount: usdAdded,
           asset: `M-Pesa Sandbox (Mpesa Code: ${mpesa_code || 'IPN'})`,
@@ -560,7 +605,8 @@ app.post("/api/payhero/callback", async (req, res) => {
         } as any);
       }
     } else {
-      console.log(`PAYHERO CALLBACK SIGNALLED FAILURE: status=${status}`);
+      console.log(`PAYHERO CALLBACK SIGNALLED FAILURE: status=${statusVal}`);
+      
       const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
       if (txIndex !== -1) {
         memoryTransactions[txIndex].status = "FAILED";
@@ -569,14 +615,28 @@ app.post("/api/payhero/callback", async (req, res) => {
       
       const db = getSupabase();
       if (db) {
-        await db.from("transactions").insert({
-          email,
-          type: "DEPOSIT",
-          amount: 0,
-          asset: "M-Pesa (Cancelled/Declined)",
-          address: `M-Pesa IPN Ref: ${external_reference}`,
-          status: "FAILED"
+        // Record failed transaction via SECURITY DEFINER bypass RPC
+        const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+          secure_token: 'payhero_system_clear_token_vfx',
+          target_email: emailLower,
+          tx_type: "DEPOSIT",
+          tx_amount: 0,
+          tx_asset: "M-Pesa (Cancelled/Declined)",
+          tx_address: `IPN Ref: ${external_reference}`,
+          tx_status: "FAILED"
         });
+
+        if (txRpcErr) {
+          console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
+          await db.from("transactions").insert({
+            email: emailLower,
+            type: "DEPOSIT",
+            amount: 0,
+            asset: "M-Pesa (Cancelled/Declined)",
+            address: `M-Pesa IPN Ref: ${external_reference}`,
+            status: "FAILED"
+          });
+        }
       }
     }
 

