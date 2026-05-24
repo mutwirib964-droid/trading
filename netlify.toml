@@ -1,0 +1,17 @@
+# Netlify configuration file for VexcoinFX Full-Stack Serverless Deployment
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Redirect all API requests to the serverless Netlify function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# Redirect all remaining paths to index.html to enable smooth client-side SPA routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

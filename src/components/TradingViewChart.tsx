@@ -384,8 +384,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
 
   // Projection coordinate conversions
   const getX = (index: number) => {
-    const adjustedIndex = index - progressFraction;
-    return (adjustedIndex / (zoomLevel - 1)) * drawableWidth + leftMargin;
+    const paddedZoom = zoomLevel + 1.8;
+    return (index / paddedZoom) * drawableWidth + leftMargin;
   };
 
   const getY = (price: number) => {
@@ -472,11 +472,12 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Nearest item index determination accounting for progressFraction offset scrolling
+    // Nearest item index determination
     const relativeX = (x / rect.width) * chartWidth;
     const adjustedX = relativeX - leftMargin;
-    const indexFloat = (adjustedX / drawableWidth) * (zoomLevel - 1);
-    const index = Math.min(zoomLevel - 1, Math.max(0, Math.round(indexFloat + progressFraction)));
+    const paddedZoom = zoomLevel + 1.8;
+    const indexFloat = (adjustedX / drawableWidth) * paddedZoom;
+    const index = Math.min(zoomLevel - 1, Math.max(0, Math.round(indexFloat)));
 
     if (visibleCandles[index]) {
       setHoverIndex(index);
@@ -632,6 +633,10 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
             <clipPath id="chart-viewport-clip">
               <rect x={leftMargin} y={0} width={drawableWidth} height={chartHeight} />
             </clipPath>
+            <linearGradient id="left-fade-gradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#0b0f19" stopOpacity="1" />
+              <stop offset="100%" stopColor="#0b0f19" stopOpacity="0" />
+            </linearGradient>
           </defs>
 
           {/* Subtle Vertical Grid Lines (Matches Picture 2) wrapped in viewport clip */}
@@ -983,6 +988,16 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
               ${activeAsset.price.toLocaleString(undefined, { minimumFractionDigits: activeAsset.category === 'forex' ? 4 : 2 })}
             </text>
           </g>
+
+          {/* Elegant fade mask to make older candles vanish silently on the left */}
+          <rect
+            x={leftMargin}
+            y={0}
+            width="55"
+            height={chartHeight - 15}
+            fill="url(#left-fade-gradient)"
+            pointerEvents="none"
+          />
 
           {/* Interactive cursor crosshair */}
           {hoverIndex !== null && (

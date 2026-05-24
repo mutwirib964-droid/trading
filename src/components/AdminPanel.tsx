@@ -1,6 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
-import { Users, DollarSign, Edit, ShieldAlert, Award, PhoneCall, RefreshCw, Layers } from 'lucide-react';
+import { 
+  Users, DollarSign, Edit, ShieldAlert, PhoneCall, 
+  RefreshCw, Search, MoreVertical, Check, X, ShieldCheck, 
+  Trash, ArrowLeftRight, Layers, CreditCard, ChevronDown, Mail
+} from 'lucide-react';
+import { getApiUrl } from '../lib/api';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -15,42 +20,79 @@ interface AdminStats {
   users: Array<{
     id?: string;
     email: string;
+    name?: string;
     role: string;
     wallet_balance: number;
     total_deposited: number;
+    demo_wallet_balance?: number;
+    is_kyc_verified?: string;
+    created_at?: string;
+  }>;
+  transactions?: Array<{
+    id: string;
+    email?: string;
+    user_email?: string;
+    type: string;
+    amount: number;
+    asset: string;
+    address?: string;
+    status: string;
+    created_at?: string;
   }>;
 }
 
 export default function AdminPanel({ currentUser, addToast, onRefreshUserSession }: AdminPanelProps) {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(false);
-  const [selectedUserEmail, setSelectedUserEmail] = useState('');
-  const [editBalance, setEditBalance] = useState('');
-  const [editRole, setEditRole] = useState('user');
+  const [currentTab, setCurrentTab] = useState<'users' | 'transactions'>('users');
+  const [searchQuery, setSearchQuery] = useState('');
   
-  // Sandbox test states
-  const [sandboxEmail, setSandboxEmail] = useState('');
-  const [sandboxAmount, setSandboxAmount] = useState('20');
-  const [sandboxLoading, setSandboxLoading] = useState(false);
+  // Action menus state
+  const [openMenuUserId, setOpenMenuUserId] = useState<string | null>(null);
+  
+  // Modal Edit states
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [modalUserEmail, setModalUserEmail] = useState('');
+  const [modalRealBalance, setModalRealBalance] = useState('');
+  const [modalDemoBalance, setModalDemoBalance] = useState('');
+  const [modalRole, setModalRole] = useState('user');
+  const [modalKyc, setModalKyc] = useState('unverified');
+  
+  // MPesa Simulator states
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
+  const [simUserEmail, setSimUserEmail] = useState('');
+  const [simAmount, setSimAmount] = useState('20');
+  const [simLoading, setSimLoading] = useState(false);
+
+  const statsMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close actions menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (openMenuUserId && !(event.target as HTMLElement).closest('.actions-container')) {
+        setOpenMenuUserId(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openMenuUserId]);
 
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/admin/overview?adminEmail=${encodeURIComponent(currentUser.email)}&adminUid=${encodeURIComponent(currentUser.id || '')}`);
+      const url = getApiUrl(`/api/admin/overview?adminEmail=${encodeURIComponent(currentUser.email)}&adminUid=${encodeURIComponent(currentUser.id || '')}`);
+      const r = await fetch(url);
       if (r.ok) {
         const d = await r.json();
         setStats(d);
-        if (d.users && d.users.length > 0 && !selectedUserEmail) {
-          setSelectedUserEmail(d.users[0].email);
-          setEditBalance(String(d.users[0].wallet_balance || d.users[0].walletBalance || 0));
-          setEditRole(d.users[0].role || 'user');
-        }
       } else {
-        addToast("Failed to fetch admin dashboard payload stats", "ERROR");
+        addToast("Failed to fetch administrative records", "ERROR");
       }
     } catch (err) {
       console.error(err);
-      addToast("Server network offline for administrative endpoints", "ERROR");
+      addToast("Administrative backend offline", "ERROR");
     } finally {
       setLoading(false);
     }
@@ -60,308 +102,743 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
     fetchStats();
   }, []);
 
-  const handleSelectUser = (email: string) => {
-    setSelectedUserEmail(email);
-    const u = stats?.users.find(x => x.email === email);
-    if (u) {
-      // support camelCase vs snake_case
-      const bal = u.wallet_balance !== undefined ? u.wallet_balance : (u as any).walletBalance || 0;
-      setEditBalance(String(bal));
-      setEditRole(u.role || 'user');
-    }
+  const handleOpenEditModal = (user: any) => {
+    setModalUserEmail(user.email);
+    setModalRealBalance(String(user.wallet_balance ?? 0));
+    setModalDemoBalance(String(user.demo_wallet_balance ?? 10000));
+    setModalRole(user.role || 'user');
+    setModalKyc(user.is_kyc_verified || 'unverified');
+    setIsEditModalOpen(true);
+    setOpenMenuUserId(null);
   };
 
   const handleSaveUserParams = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUserEmail) return;
+    if (!modalUserEmail) return;
 
     try {
-      const resp = await fetch("/api/admin/update-user", {
+      const resp = await fetch(getApiUrl("/api/admin/update-user"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           adminEmail: currentUser.email,
           adminUid: currentUser.id || '',
-          email: selectedUserEmail,
-          role: editRole,
-          wallet_balance: parseFloat(editBalance) || 0
+          email: modalUserEmail,
+          role: modalRole,
+          wallet_balance: parseFloat(modalRealBalance) || 0,
+          demo_wallet_balance: parseFloat(modalDemoBalance) || 0,
+          is_kyc_verified: modalKyc
         })
       });
 
       if (resp.ok) {
         const data = await resp.json();
-        addToast(data.message || "User properties saved successfully on the server ledger.", "SUCCESS");
+        addToast("User properties adjusted successfully.", "SUCCESS");
+        setIsEditModalOpen(false);
         
-        // If modified currently logged in user, synchronize state
-        if (selectedUserEmail.toLowerCase() === currentUser.email.toLowerCase()) {
+        if (modalUserEmail.toLowerCase() === currentUser.email.toLowerCase()) {
           onRefreshUserSession();
         }
-        
-        // reload admin lists
         fetchStats();
       } else {
-        addToast("Error updating user properties.", "ERROR");
+        addToast("Could not update selected member.", "ERROR");
       }
     } catch (err) {
-      addToast("Failed to connect to administration controller.", "ERROR");
+      addToast("Network failure. Properties unchanged.", "ERROR");
     }
   };
 
-  const handleSandboxCallback = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!sandboxEmail) {
-      addToast("Please provide a target account email for M-Pesa simulation.", "ERROR");
-      return;
-    }
-
-    setSandboxLoading(true);
-    addToast("Executing simulated Safaricom M-Pesa IPN IP Stack transaction callback...", "INFO");
-
+  const handleOnRoleDropdownChange = async (email: string, newRole: string) => {
     try {
-      const resp = await fetch("/api/payhero/sandbox-trigger", {
+      const targetUser = stats?.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (!targetUser) return;
+
+      const resp = await fetch(getApiUrl("/api/admin/update-user"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           adminEmail: currentUser.email,
           adminUid: currentUser.id || '',
-          email: sandboxEmail,
-          amount_usd: parseFloat(sandboxAmount) || 20
+          email: email,
+          role: newRole,
+          wallet_balance: targetUser.wallet_balance
         })
       });
 
       if (resp.ok) {
-        addToast(`Callback executed! Target account (${sandboxEmail}) credited successfully.`, "SUCCESS");
-        // Update currently logged in state if targeting current user
-        if (sandboxEmail.toLowerCase() === currentUser.email.toLowerCase()) {
+        addToast(`Role reassigned to ${newRole.toUpperCase()} instantly.`, "SUCCESS");
+        if (email.toLowerCase() === currentUser.email.toLowerCase()) {
           onRefreshUserSession();
         }
         fetchStats();
       } else {
-        addToast("Failed simulating network callback flow.", "ERROR");
+        addToast("Unable to reassign role authority.", "ERROR");
       }
     } catch (e) {
-      addToast("Administrative callback dispatch failure.", "ERROR");
-    } finally {
-      setSandboxLoading(false);
+      addToast("Connection error while assigning role.", "ERROR");
     }
   };
 
+  const handleOnKycToggle = async (email: string, currentKyc: string) => {
+    const nextKyc = currentKyc === 'verified' ? 'unverified' : 'verified';
+    try {
+      const targetUser = stats?.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (!targetUser) return;
+
+      const resp = await fetch(getApiUrl("/api/admin/update-user"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: currentUser.email,
+          adminUid: currentUser.id || '',
+          email: email,
+          role: targetUser.role,
+          wallet_balance: targetUser.wallet_balance,
+          is_kyc_verified: nextKyc
+        })
+      });
+
+      if (resp.ok) {
+        addToast(`KYC status updated to ${nextKyc.toUpperCase()}.`, "SUCCESS");
+        fetchStats();
+      } else {
+        addToast("Failed to modify KYC status.", "ERROR");
+      }
+    } catch (err) {
+      addToast("Network failure. KYC unchanged.", "ERROR");
+    }
+    setOpenMenuUserId(null);
+  };
+
+  const handleDeleteUser = async (email: string) => {
+    if (!window.confirm(`Are you absolutely sure you want to delete account ${email}? This destroys their database and transaction record irreversibly.`)) {
+      return;
+    }
+
+    try {
+      const resp = await fetch(getApiUrl("/api/admin/delete-user"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: currentUser.email,
+          adminUid: currentUser.id || '',
+          email: email
+        })
+      });
+
+      if (resp.ok) {
+        addToast(`Account record for ${email} has been erased.`, "SUCCESS");
+        fetchStats();
+      } else {
+        addToast("Error removing member from cluster.", "ERROR");
+      }
+    } catch (err) {
+      addToast("Endpoint issue. No actions performed.", "ERROR");
+    }
+    setOpenMenuUserId(null);
+  };
+
+  const handleOpenSimulator = (email: string) => {
+    setSimUserEmail(email);
+    setSimAmount("20");
+    setIsSimulatorOpen(true);
+    setOpenMenuUserId(null);
+  };
+
+  const handleDispatchSandboxCallback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simUserEmail) return;
+
+    setSimLoading(true);
+    addToast("Executing Safaricom M-Pesa sandbox transaction...", "INFO");
+
+    try {
+      const resp = await fetch(getApiUrl("/api/payhero/sandbox-trigger"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: currentUser.email,
+          adminUid: currentUser.id || '',
+          email: simUserEmail,
+          amount_usd: parseFloat(simAmount) || 20
+        })
+      });
+
+      if (resp.ok) {
+        addToast(`M-Pesa simulator callback captured! Account credited with $${simAmount}.`, "SUCCESS");
+        setIsSimulatorOpen(false);
+        if (simUserEmail.toLowerCase() === currentUser.email.toLowerCase()) {
+          onRefreshUserSession();
+        }
+        fetchStats();
+      } else {
+        addToast("Error matching MPesa inbound reference.", "ERROR");
+      }
+    } catch (e) {
+      addToast("Administrative callback execution error.", "ERROR");
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
+  // Generate deterministic referral codes (matching MKT-XXXXXX format in screenshots)
+  const getReferralCode = (email: string) => {
+    let hash = 0;
+    for (let i = 0; i < email.length; i++) {
+      hash = email.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hex = Math.abs(hash).toString(16).substring(0, 6).toUpperCase().padStart(6, '9');
+    return `MKT-${hex}`;
+  };
+
+  const getInitials = (email: string, name?: string) => {
+    if (name && name.trim().length > 0) {
+      return name.trim().charAt(0).toUpperCase();
+    }
+    return email.charAt(0).toUpperCase();
+  };
+
+  const formatJoinedDate = (createdAt?: string) => {
+    if (!createdAt) return '5/22/2026';
+    try {
+      const d = new Date(createdAt);
+      return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+    } catch {
+      return '5/22/2026';
+    }
+  };
+
+  // Filter records
+  const filteredUsers = (stats?.users || []).filter(u => {
+    const term = searchQuery.toLowerCase().trim();
+    if (!term) return true;
+    const nameToTest = (u.name || '').toLowerCase();
+    const emailToTest = u.email.toLowerCase();
+    const roleToTest = (u.role || '').toLowerCase();
+    return nameToTest.includes(term) || emailToTest.includes(term) || roleToTest.includes(term);
+  });
+
+  const filteredTransactions = (stats?.transactions || []).filter(tx => {
+    const term = searchQuery.toLowerCase().trim();
+    if (!term) return true;
+    const mailToTest = (tx.email || tx.user_email || '').toLowerCase();
+    const refToTest = (tx.address || '').toLowerCase();
+    const typeToTest = (tx.type || '').toLowerCase();
+    const assetToTest = (tx.asset || '').toLowerCase();
+    return mailToTest.includes(term) || refToTest.includes(term) || typeToTest.includes(term) || assetToTest.includes(term);
+  });
+
   return (
-    <div className="space-y-6 text-left max-w-5xl mx-auto p-1 font-sans">
+    <div className="space-y-6 text-left max-w-7xl mx-auto p-4 font-sans bg-[#070b13] rounded-2xl border border-gray-800 shadow-2xl">
       
-      {/* Title block */}
-      <div className="bg-[#0b101d] border border-gray-900 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-extrabold text-white uppercase tracking-tight flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-emerald-400" />
-            ADMINISTRATIVE CONTROL TERMINAL
-          </h2>
-          <p className="text-xs text-gray-500 font-mono mt-1">
-            Logged in: <span className="text-gray-300 font-bold">{currentUser.email}</span> (Elevated System Authority)
-          </p>
+      {/* Upper stats blocks */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="bg-[#0b0f19] border border-gray-850 rounded-2xl p-5 flex items-center justify-between shadow-lg">
+          <div>
+            <span className="text-gray-500 text-[10px] uppercase font-bold tracking-wider">TOTAL REGISTERED USERS</span>
+            <p id="admin-user-count" className="text-2xl font-black text-white mt-1 font-mono">
+              {stats ? stats.totalUsers : 2}
+            </p>
+          </div>
+          <div className="bg-[#1e293b] p-3.5 rounded-xl text-blue-400 border border-blue-500/10">
+            <Users className="w-5 h-5" />
+          </div>
         </div>
 
+        <div className="bg-[#0b0f19] border border-gray-850 rounded-2xl p-5 flex items-center justify-between shadow-lg">
+          <div>
+            <span className="text-gray-500 text-[10px] uppercase font-bold tracking-wider">TOTAL DEPOSITS IN</span>
+            <p id="admin-aggregate-vol" className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+              ${stats ? stats.totalMoneyDeposited.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "$1,000.00"}
+            </p>
+          </div>
+          <div className="bg-emerald-500/10 p-3.5 rounded-xl text-emerald-400 border border-emerald-500/20">
+            <DollarSign className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs Layout & Search Bar Header Bar */}
+      <div className="bg-[#0b0f19] border border-gray-850 rounded-2xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shadow-lg">
+        
+        {/* Navigation Tabs Pillbox */}
+        <div className="flex bg-[#05070a] p-1 rounded-xl border border-gray-800/80 self-start">
+          <button
+            onClick={() => { setCurrentTab('users'); setOpenMenuUserId(null); }}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentTab === 'users'
+                ? 'bg-emerald-500 text-black shadow-lg font-bold'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            Users
+          </button>
+          <button
+            onClick={() => { setCurrentTab('transactions'); setOpenMenuUserId(null); }}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentTab === 'transactions'
+                ? 'bg-emerald-500 text-black shadow-lg font-bold'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5" />
+            Transactions
+          </button>
+        </div>
+
+        {/* Global Directory Search Bar */}
+        <div className="relative flex-1 max-w-md w-full">
+          <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-gray-500" />
+          <input
+            type="text"
+            placeholder={currentTab === 'users' ? "Search users by email, name or role..." : "Search transactions..."}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-[#05070a] border border-gray-800 rounded-xl pl-10 pr-4 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 text-white placeholder-gray-600"
+          />
+          {searchQuery && (
+            <button 
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3.5 top-2 py-1 text-gray-500 hover:text-gray-300 text-xs"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Refresh Command Button */}
         <button
           onClick={fetchStats}
           disabled={loading}
-          className="flex items-center gap-2 bg-[#121826] border border-gray-800 hover:border-emerald-500 hover:text-white px-4 py-2 text-xs font-mono font-bold uppercase rounded transition-all cursor-pointer text-gray-400"
+          className="flex items-center gap-2 border border-gray-800 hover:border-emerald-500 hover:text-emerald-400 text-gray-400 px-4 py-2 text-[11px] font-bold uppercase rounded-xl transition-all cursor-pointer bg-[#05070a]"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh Stats
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? "Re-aligning..." : "Sync Records"}
         </button>
+
       </div>
 
-      {/* Stats Counter metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono">
-        <div className="bg-[#0b101d] border border-gray-900 rounded-xl p-5 flex items-center justify-between">
-          <div>
-            <span className="text-gray-500 text-[10px] uppercase font-bold tracking-wider">Total Registered Accounts</span>
-            <p className="text-3xl font-extrabold text-white mt-1">
-              {stats ? stats.totalUsers : "..."}
-            </p>
-          </div>
-          <div className="bg-emerald-500/10 p-3 rounded-lg text-emerald-400">
-            <Users className="w-6 h-6" />
-          </div>
-        </div>
+      {/* Primary Users Tab Content */}
+      <div className="bg-[#0b0f19] border border-gray-850 rounded-2xl overflow-hidden shadow-lg">
+        {currentTab === 'users' ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#05070a] border-b border-gray-850 text-[10px] font-bold text-gray-500 tracking-wider">
+                  <th className="py-4 px-6 uppercase">USER DETAILS</th>
+                  <th className="py-4 px-4 uppercase">ROLE & STATUS</th>
+                  <th className="py-4 px-4 uppercase">ACCOUNT BALANCES</th>
+                  <th className="py-4 px-4 uppercase">CASH FLOW</th>
+                  <th className="py-4 px-6 text-right uppercase">ACTION</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-850 text-xs">
+                {filteredUsers.length > 0 ? (
+                  filteredUsers.map((u) => {
+                    const dynamicName = u.name || u.email.split('@')[0];
+                    const rawEmail = u.email;
+                    const isCurrentUser = currentUser.email.toLowerCase() === rawEmail.toLowerCase();
+                    const isKycVerifiedState = u.is_kyc_verified === 'verified';
 
-        <div className="bg-[#0b101d] border border-gray-900 rounded-xl p-5 flex items-center justify-between">
-          <div>
-            <span className="text-gray-500 text-[10px] uppercase font-bold tracking-wider">Aggregate Platform Cash Flow</span>
-            <p className="text-3xl font-extrabold text-emerald-400 mt-1">
-              ${stats ? stats.totalMoneyDeposited.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "..."}
-            </p>
+                    return (
+                      <tr key={u.email} className="hover:bg-gray-900/40 border-b border-gray-850/60 transition-all text-gray-300">
+                        {/* USER DETAILS */}
+                        <td className="py-4 px-6 select-text">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 shrink-0 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-sm flex items-center justify-center shadow-md">
+                              {getInitials(u.email, u.name)}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-bold text-white leading-snug truncate">
+                                {dynamicName}
+                              </h4>
+                              {/* Respective Email - Completely visible, select-all-enabled */}
+                              <div className="text-gray-400 text-[11px] font-semibold leading-normal select-all flex items-center gap-1 hover:text-emerald-400 transition-colors">
+                                <Mail className="w-3 h-3 text-gray-500" />
+                                {rawEmail}
+                              </div>
+                              <p className="text-[10px] text-gray-500 font-mono mt-0.5">
+                                ID: <span className="select-all">{u.id ? u.id.substring(0, 8) : 'auth_key'}...</span>
+                              </p>
+                              <span className="text-[10px] text-gray-500 block mt-0.5">
+                                Joined: {formatJoinedDate(u.created_at)}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* ROLE & STATUS */}
+                        <td className="py-4 px-4">
+                          <div className="flex flex-col gap-1.5">
+                            {/* Interactive Select Role Dropdown */}
+                            <div className="relative inline-block w-28">
+                              <select
+                                value={u.role || 'user'}
+                                onChange={(e) => handleOnRoleDropdownChange(rawEmail, e.target.value)}
+                                className="w-full appearance-none bg-[#05070a] border border-gray-800 hover:border-gray-700 text-white px-2.5 py-1 pr-6 rounded-lg text-xs font-semibold focus:outline-none focus:border-emerald-500/60 cursor-pointer text-ellipsis overflow-hidden font-sans"
+                              >
+                                <option value="user" className="bg-[#0b0f19] text-white">User</option>
+                                <option value="marketer" className="bg-[#0b0f19] text-white">Marketer</option>
+                                {u.role === 'admin' && <option value="admin" className="bg-[#0b0f19] text-white">Admin</option>}
+                              </select>
+                              <ChevronDown className="absolute right-2 top-2 w-3 h-3 text-gray-500 pointer-events-none" />
+                            </div>
+
+                            {/* KYC Pill badge */}
+                            <div>
+                              {isKycVerifiedState ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono tracking-wider bg-[#10b981]/10 text-emerald-400 border border-emerald-500/20 uppercase">
+                                  VERIFIED
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase">
+                                  NOT_VERIFIED
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* ACCOUNT BALANCES */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div>
+                              <span className="text-gray-500 text-[9px] uppercase font-bold tracking-wider block">REAL BALANCE</span>
+                              <button 
+                                onClick={() => handleOpenEditModal(u)}
+                                className="text-xs font-bold text-white border-b border-dashed border-gray-700 hover:text-emerald-400 hover:border-emerald-400 text-left transition"
+                                title="Click to edit real/demo account balance"
+                              >
+                                ${(u.wallet_balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </button>
+                            </div>
+                            <div>
+                              <span className="text-gray-500 text-[9px] uppercase font-bold tracking-wider block">DEMO BALANCE</span>
+                              <span className="text-xs font-bold text-gray-300">
+                                ${(u.demo_wallet_balance ?? 10000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* CASH FLOW */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div>
+                              <span className="text-gray-500 text-[9px] uppercase font-bold tracking-wider block">DEPOSITS</span>
+                              <span className="text-xs font-bold text-emerald-400 block">
+                                ${(u.total_deposited ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500 text-[9px] uppercase font-bold tracking-wider block">WITHDRAWALS</span>
+                              <span className="text-xs font-bold text-rose-400 block">$0.00</span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* ACTION */}
+                        <td className="py-4 px-6 text-right relative font-sans">
+                          {isCurrentUser ? (
+                            <span className="text-[10px] text-gray-500 italic">Self (Admin)</span>
+                          ) : (
+                            <div className="inline-block text-left actions-container">
+                              <button
+                                onClick={() => setOpenMenuUserId(openMenuUserId === u.email ? null : u.email)}
+                                className="p-1.5 rounded-lg border border-gray-800 hover:border-gray-700 text-gray-400 hover:text-white hover:bg-gray-900/50 focus:outline-none transition inline-flex items-center"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+
+                              {/* Dropdown Flyout Panel */}
+                              {openMenuUserId === u.email && (
+                                <div className="absolute right-6 mt-1 w-48 bg-[#0b0f19] border border-gray-800 rounded-xl shadow-2xl z-50 py-1.5 divide-y divide-gray-850 text-left overflow-hidden text-xs">
+                                  <div className="py-1">
+                                    <button
+                                      onClick={() => handleOpenEditModal(u)}
+                                      className="w-full text-left px-4 py-2 hover:bg-gray-900 text-gray-200 flex items-center gap-2 font-semibold"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-blue-400" />
+                                      Adjust Balances
+                                    </button>
+                                    <button
+                                      onClick={() => handleOnKycToggle(rawEmail, u.is_kyc_verified || 'unverified')}
+                                      className="w-full text-left px-4 py-2 hover:bg-gray-900 text-gray-200 flex items-center gap-2 font-semibold"
+                                    >
+                                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                      {isKycVerifiedState ? "Revoke Verification" : "Verify KYC"}
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenSimulator(rawEmail)}
+                                      className="w-full text-left px-4 py-2 hover:bg-gray-900 text-emerald-400 flex items-center gap-2 font-semibold"
+                                    >
+                                      <PhoneCall className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                                      Mock M-Pesa Hook
+                                    </button>
+                                  </div>
+                                  <div className="py-1">
+                                    <button
+                                      onClick={() => handleDeleteUser(rawEmail)}
+                                      className="w-full text-left px-4 py-2 hover:bg-rose-950/20 text-rose-400 flex items-center gap-2 font-bold"
+                                    >
+                                      <Trash className="w-3.5 h-3.5 text-rose-500" />
+                                      Erase Profile
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="text-center py-12 text-gray-500 italic">
+                      Zero profile records matching search parameter found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-          <div className="bg-emerald-500/10 p-3 rounded-lg text-emerald-400">
-            <DollarSign className="w-6 h-6" />
+        ) : (
+          /* TRANSACTION TAB */
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#05070a] border-b border-gray-850 text-[10px] font-bold text-gray-500 tracking-wider">
+                  <th className="py-4 px-6 uppercase">TRANSACTION ID</th>
+                  <th className="py-4 px-4 uppercase">CLIENT EMAIL</th>
+                  <th className="py-4 px-4 uppercase">CLASSIFICATION</th>
+                  <th className="py-4 px-4 uppercase">VOLUME</th>
+                  <th className="py-4 px-4 uppercase">CHANNELS REFERENCE</th>
+                  <th className="py-4 px-4 uppercase">TIMESTAMP</th>
+                  <th className="py-4 px-6 text-right uppercase">STATUS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-850">
+                {filteredTransactions.length > 0 ? (
+                  filteredTransactions.map((tx) => {
+                    const isDeposit = tx.type === 'DEPOSIT';
+                    const txEmail = tx.email || tx.user_email || 'anonymous@vexcoinfx.com';
+                    return (
+                      <tr key={tx.id} className="hover:bg-gray-900/40 border-b border-gray-850/60 transition-all text-gray-350">
+                        {/* ID */}
+                        <td className="py-4 px-6 font-mono text-[10px] select-all font-bold text-gray-500">
+                          {tx.id || 'N/A'}
+                        </td>
+                        {/* CLIENT EMAIL */}
+                        <td className="py-4 px-4 select-all font-semibold text-gray-200">
+                          {txEmail}
+                        </td>
+                        {/* CLASSIFICATION */}
+                        <td className="py-4 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[8.5px] font-mono font-bold tracking-wide uppercase ${
+                            isDeposit ? 'bg-[#10b981]/10 text-emerald-400 border border-emerald-500/20' : 'bg-[#f43f5e]/10 text-rose-400 border border-rose-500/20'
+                          }`}>
+                            {tx.type}
+                          </span>
+                        </td>
+                        {/* VOLUME */}
+                        <td className="py-4 px-4 font-bold">
+                          <span className={isDeposit ? 'text-emerald-400' : 'text-rose-450'}>
+                            {isDeposit ? '+' : '-'}${Number(tx.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </td>
+                        {/* CHANNELS REFERENCE */}
+                        <td className="py-4 px-4 text-gray-400 min-w-[150px]">
+                          <div className="font-semibold text-gray-200">{tx.asset || 'Credit Transfer'}</div>
+                          <div className="text-[10px] text-gray-500 font-mono select-all">{tx.address || 'Local Clearing'}</div>
+                        </td>
+                        {/* TIMESTAMP */}
+                        <td className="py-4 px-4 text-gray-500 text-[10px] font-mono">
+                          {tx.created_at ? new Date(tx.created_at).toLocaleString() : 'Recent Session'}
+                        </td>
+                        {/* STATUS */}
+                        <td className="py-4 px-6 text-right">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[8.5px] font-bold font-mono tracking-wider bg-[#10b981]/10 text-emerald-400 border border-emerald-500/20 uppercase">
+                            {tx.status || 'COMPLETED'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="text-center py-12 text-gray-500 italic">
+                      No administrative transactions matching.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Left Column: Account Directory */}
-        <div className="lg:col-span-1 bg-[#0b101d] border border-gray-900 rounded-xl p-5 flex flex-col h-[500px]">
-          <h3 className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest border-b border-gray-950 pb-2 mb-3">
-            ACCOUNTS DIRECTORY
-          </h3>
-          
-          <div className="flex-1 overflow-y-auto space-y-2 pr-1 font-mono text-xxs">
-            {stats?.users && stats.users.length > 0 ? (
-              stats.users.map((u) => {
-                const bal = u.wallet_balance !== undefined ? u.wallet_balance : (u as any).walletBalance || 0;
-                const isSelected = selectedUserEmail.toLowerCase() === u.email.toLowerCase();
-                return (
-                  <button
-                    key={u.email}
-                    onClick={() => handleSelectUser(u.email)}
-                    className={`w-full text-left p-3 rounded-lg border transition-all cursor-pointer flex flex-col gap-1 ${
-                      isSelected
-                        ? 'bg-emerald-950/15 border-emerald-500 text-white font-bold'
-                        : 'bg-[#121826]/30 border-gray-950 text-gray-400 hover:text-gray-200 hover:bg-[#121826]/50'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start w-full gap-2">
-                      <span className="break-all font-bold text-gray-200 select-all" title={u.email}>{u.email}</span>
-                      <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono tracking-widest uppercase ${
-                        u.role === 'admin' ? 'bg-rose-500/15 text-rose-400' : u.role === 'marketer' ? 'bg-purple-500/15 text-purple-400' : 'bg-gray-800 text-gray-500'
-                      }`}>
-                        {u.role || 'user'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-gray-500 text-[9px] mt-1">
-                      <span>Balance: <b className="text-emerald-400">${bal.toLocaleString()}</b></span>
-                      <span>Deposits: <b>${(u.total_deposited || (u as any).totalDeposited || 0).toLocaleString()}</b></span>
-                    </div>
-                  </button>
-                );
-              })
-            ) : (
-              <p className="text-center text-gray-600 italic py-10">No users verified on active memory ledger.</p>
-            )}
-          </div>
-        </div>
+      {/* POPUP MODAL: ADJUST BALANCES */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-100 p-4">
+          <div className="bg-[#0b0f19] rounded-3xl border border-gray-800 shadow-2xl max-w-md w-full overflow-hidden p-6 font-sans">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-850">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                <Edit className="w-4 h-4 text-blue-400" />
+                ADJUST TRADING LEDGER
+              </h3>
+              <button 
+                onClick={() => setIsEditModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-gray-900 text-gray-550 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-        {/* Middle Column: Modify user panel */}
-        <div className="lg:col-span-1 bg-[#0b101d] border border-gray-900 rounded-xl p-5">
-          <h3 className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest border-b border-gray-950 pb-2 mb-4 flex items-center gap-1.5">
-            <Edit className="w-4 h-4 text-emerald-400" />
-            EDIT PARTICIPANT VALUE
-          </h3>
-
-          {selectedUserEmail ? (
-            <form onSubmit={handleSaveUserParams} className="space-y-4 font-mono text-xs">
+            <form onSubmit={handleSaveUserParams} className="space-y-4 text-xs mt-4">
               <div className="space-y-1">
-                <span className="text-gray-500 text-[9px] uppercase font-bold block">Selected Account Email</span>
+                <span className="text-gray-500 text-[10px] uppercase font-bold block">Account Mail Index</span>
                 <input
                   type="text"
-                  value={selectedUserEmail}
-                  className="w-full bg-gray-950 border border-gray-800 text-gray-400 rounded p-2 focus:outline-none"
+                  value={modalUserEmail}
                   disabled
+                  className="w-full bg-[#05070a] border border-gray-850 text-gray-400 rounded-xl p-3 focus:outline-none"
                 />
               </div>
 
-              <div className="space-y-1">
-                <span className="text-gray-500 text-[9px] uppercase font-bold block">Account Authority Role</span>
-                <select
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-800 text-white rounded p-2 focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="user">User (Standard Trader - ~25% win rate)</option>
-                  <option value="marketer">Marketer (Elite Trader - ~85% win rate + Onboarding credit)</option>
-                  <option value="admin">System Admin</option>
-                </select>
-                <div className="text-[9px] text-gray-500 leading-normal mt-1 italic">
-                  Note: Elevating user to <b>marketer</b> will automatically credit their ledger with a random onboarding bonus of <b>$100 to $200</b> (credited upon form save).
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-gray-500 text-[10px] uppercase font-bold block">Real Balance ($ USD)</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={modalRealBalance}
+                    onChange={(e) => setModalRealBalance(e.target.value)}
+                    required
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-white font-semibold focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-gray-500 text-[10px] uppercase font-bold block">Demo Balance ($ USD)</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={modalDemoBalance}
+                    onChange={(e) => setModalDemoBalance(e.target.value)}
+                    required
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-white font-semibold focus:outline-none focus:border-emerald-500"
+                  />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-gray-500 text-[9px] uppercase font-bold block">Real Wallet Balance ($ USD)</span>
+                <span className="text-gray-500 text-[10px] uppercase font-bold block">Access Role Authority</span>
+                <select
+                  value={modalRole}
+                  onChange={(e) => setModalRole(e.target.value)}
+                  className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-white font-semibold focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="user" className="bg-[#0b0f19] text-white">User (Standard account)</option>
+                  <option value="marketer" className="bg-[#0b0f19] text-white">Marketer (Elite account)</option>
+                  {modalRole === 'admin' && (
+                    <option value="admin" className="bg-[#0b0f19] text-white">Administrator (Elevated command access)</option>
+                  )}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-gray-500 text-[10px] uppercase font-bold block">KYC Verification Status</span>
+                <select
+                  value={modalKyc}
+                  onChange={(e) => setModalKyc(e.target.value)}
+                  className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-white font-semibold focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="unverified" className="bg-[#0b0f19] text-white">Unverified (NOT_VERIFIED)</option>
+                  <option value="verified" className="bg-[#0b0f19] text-white">Verified (VERIFIED)</option>
+                </select>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold uppercase rounded-xl cursor-pointer transition text-[11px] tracking-wider"
+                >
+                  Save Account Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP MODAL: M-PESA SIMULATOR */}
+      {isSimulatorOpen && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-100 p-4">
+          <div className="bg-[#0b0f19] rounded-3xl border border-gray-800 shadow-2xl max-w-sm w-full overflow-hidden p-6 font-sans">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-850">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                <PhoneCall className="w-4 h-4 text-emerald-400 animate-pulse" />
+                M-PESA DEPOSIT SIMULATOR
+              </h3>
+              <button 
+                onClick={() => setIsSimulatorOpen(false)}
+                className="p-1 rounded-lg hover:bg-gray-900 text-gray-500 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="my-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3.5 text-[10.5px] text-emerald-400 leading-normal">
+              <span className="font-bold block mb-0.5 uppercase tracking-wide">M-PESA PAYHERO API EMULATOR</span>
+              Dispatches a simulated Safaricom Instant Webhook reference notification. This will verify real-time deposit ledger loops seamlessly and allocate real credit!
+            </div>
+
+            <form onSubmit={handleDispatchSandboxCallback} className="space-y-4 text-xs mt-2">
+              <div className="space-y-1">
+                <span className="text-gray-500 text-[10px] uppercase font-bold block">Target Client</span>
                 <input
-                  type="number"
-                  value={editBalance}
-                  onChange={(e) => setEditBalance(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-800 text-white rounded p-2 focus:outline-none focus:border-emerald-500"
-                  required
+                  type="text"
+                  value={simUserEmail}
+                  disabled
+                  className="w-full bg-[#05070a] border border-gray-850 text-gray-500 rounded-xl p-3 focus:outline-none font-bold"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-emerald-500 text-black border-none font-bold uppercase rounded cursor-pointer transition-all hover:bg-emerald-400 text-[10px] tracking-wide"
-              >
-                PROMPT UPDATED LEDGER VALUE
-              </button>
-            </form>
-          ) : (
-            <div className="text-center py-20 text-gray-600 text-xs font-mono">
-              Please select an account from the directory tree to modify attributes.
-            </div>
-          )}
-        </div>
-
-        {/* Right Column: Safaricom callback simulator */}
-        <div className="lg:col-span-1 bg-[#0b101d] border border-gray-900 rounded-xl p-5">
-          <h3 className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest border-b border-gray-950 pb-2 mb-4 flex items-center gap-1.5">
-            <PhoneCall className="w-4 h-4 text-emerald-400" />
-            M-PESA WEBHOOK SIMULATOR
-          </h3>
-
-          <div className="bg-emerald-950/10 border border-emerald-500/10 p-3 rounded-lg text-xxs text-emerald-400 leading-normal mb-4">
-            <span className="font-bold block mb-1">STK CALLBACK ENVELOPE</span>
-            Test the entire database, callback, and balance integration seamlessly. Triggers a mock Payhero callback to instantly reward the targeted account!
-          </div>
-
-          <form onSubmit={handleSandboxCallback} className="space-y-4 font-mono text-xs">
-            <div className="space-y-1">
-              <span className="text-gray-500 text-[9px] uppercase font-bold block">Target Profile Email</span>
-              <select
-                value={sandboxEmail}
-                onChange={(e) => setSandboxEmail(e.target.value)}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded p-2 focus:outline-none focus:border-emerald-500"
-                required
-              >
-                <option value="">-- Choose Account --</option>
-                {stats?.users.map(u => (
-                  <option key={u.email} value={u.email}>{u.email}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-gray-500 text-[9px] uppercase font-bold block">Simulated Value ($ USD)</span>
-              <input
-                type="number"
-                value={sandboxAmount}
-                onChange={(e) => setSandboxAmount(e.target.value)}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded p-2 focus:outline-none focus:border-emerald-500"
-                min="17"
-                required
-              />
-              <div className="text-[9px] text-gray-500 italic">
-                Equates to KES {((parseFloat(sandboxAmount) || 0) * 130).toLocaleString()}
+              <div className="space-y-1">
+                <span className="text-gray-500 text-[10px] uppercase font-bold block">Credit Value ($ USD)</span>
+                <input
+                  type="number"
+                  value={simAmount}
+                  onChange={(e) => setSimAmount(e.target.value)}
+                  className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-white font-semibold focus:outline-none focus:border-emerald-500"
+                  min="5"
+                  required
+                />
+                <div className="text-[10px] text-gray-500 font-mono mt-1 text-right italic font-medium">
+                  Approx. KES {((parseFloat(simAmount) || 0) * 130).toLocaleString()}
+                </div>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={sandboxLoading || !sandboxEmail}
-              className="w-full py-2.5 bg-[#121826] border border-gray-800 hover:border-emerald-500 text-white font-bold uppercase rounded cursor-pointer transition-all hover:text-emerald-400 text-[10px] tracking-wide flex justify-center items-center gap-1.5"
-            >
-              {sandboxLoading ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> DISPATCHING IPN...
-                </>
-              ) : (
-                "TRIGGER SIMULATED WEBHOOK"
-              )}
-            </button>
-          </form>
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={simLoading}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold uppercase rounded-xl cursor-pointer transition text-[11px] tracking-wider flex justify-center items-center gap-1.5"
+                >
+                  {simLoading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Emulating...
+                    </>
+                  ) : (
+                    "Trigger Webhook Callback"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-
-      </div>
+      )}
 
     </div>
   );

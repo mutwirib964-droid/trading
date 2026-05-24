@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Transaction } from '../types';
 import { CreditCard, Landmark, Check, Copy, ArrowUpRight, ArrowDownRight, Link, RefreshCw, X, Phone } from 'lucide-react';
+import { getApiUrl } from '../lib/api';
 
 interface DepositWithdrawModalProps {
   user: User;
@@ -59,7 +60,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
     const pollInterval = setInterval(async () => {
       try {
-        const resp = await fetch(`/api/payhero/check-status?reference=${encodeURIComponent(stkReference)}`);
+        const resp = await fetch(getApiUrl(`/api/payhero/check-status?reference=${encodeURIComponent(stkReference)}`));
         if (resp.ok) {
           const data = await resp.json();
           if (data.status === 'COMPLETED') {
@@ -122,7 +123,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
     addToast(`Initiating instant STK push request of $${usd} (KES ${(usd * KES_RATE).toLocaleString()})...`, "INFO");
 
     try {
-      const resp = await fetch("/api/payhero/stkpush", {
+      const resp = await fetch(getApiUrl("/api/payhero/stkpush"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

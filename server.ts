@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 app.use(express.json());
@@ -48,6 +48,8 @@ interface UserMemory {
   wallet_balance: number;
   total_deposited: number;
   phone?: string;
+  is_kyc_verified?: string;
+  demo_wallet_balance?: number;
 }
 interface TxMemory {
   id: string;
@@ -642,16 +644,21 @@ app.get("/api/admin/overview", async (req, res) => {
 
     const db = getSupabase();
     if (db) {
-      // query real profile counters
-      const { data: users, error: uErr } = await db.from("profiles").select("*");
+      const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
+      // query real profile counters via secure RPC to bypass RLS safely
+      const { data: users, error: uErr } = await db.rpc("admin_get_all_profiles", { admin_uid: callerUid });
       if (!uErr && users) {
+        const { data: txs } = await db.rpc("admin_get_all_transactions", { admin_uid: callerUid });
         const totalDepositsResult = users.reduce((acc: number, item: any) => acc + (item.total_deposited || 0), 0);
         return res.json({
           offline: false,
           totalUsers: users.length,
           totalMoneyDeposited: totalDepositsResult,
-          users: users
+          users: users,
+          transactions: txs || []
         });
+      } else if (uErr) {
+        console.warn("[Supabase API] Failed to select from profiles table via RPC, falling back to memory store:", uErr.message);
       }
     }
 
@@ -661,7 +668,8 @@ app.get("/api/admin/overview", async (req, res) => {
       offline: true,
       totalUsers: memoryUsers.length,
       totalMoneyDeposited: depTotal,
-      users: memoryUsers
+      users: memoryUsers,
+      transactions: memoryTransactions || []
     });
 
   } catch (error: any) {
@@ -684,6 +692,8 @@ app.post("/api/admin/update-user", async (req, res) => {
 
     const db = getSupabase();
     
+    const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
+
     // Check if promoting user to MARKETER: Onboarding bonus of $100 to $200
     let onboardingBonus = 0;
     let didPromoteToMarketer = false;
@@ -692,7 +702,8 @@ app.post("/api/admin/update-user", async (req, res) => {
       // check if they are already marketer to avoid spamming credit
       let alreadyMarketer = false;
       if (db) {
-        const { data: cur } = await db.from("profiles").select("role").eq("email", email).single();
+        const { data: profiles } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: email.toLowerCase().trim() });
+        const cur = profiles && profiles[0];
         if (cur && cur.role === 'marketer') {
           alreadyMarketer = true;
         }
@@ -712,8 +723,9 @@ app.post("/api/admin/update-user", async (req, res) => {
 
     if (db) {
       const emailLower = email.toLowerCase().trim();
-      // 1. Fetch current profile values
-      const { data: profile } = await db.from("profiles").select("wallet_balance, total_deposited").eq("email", emailLower).single();
+      // 1. Fetch current profile values safely via RPC
+      const { data: profiles } = await db.rpc("admin_get_profile", { admin_uid: callerUid, target_email: emailLower });
+      const profile = profiles && profiles[0];
       if (profile) {
         let finalBal = wallet_balance !== undefined ? Number(wallet_balance) : profile.wallet_balance;
         let finalDep = profile.total_deposited;
@@ -764,6 +776,18 @@ app.post("/api/admin/update-user", async (req, res) => {
             total_deposited: finalDep
           }).eq("email", emailLower);
         }
+
+        // Apply additional profile properties if requested (e.g. KYC, Demo balance)
+        const extraPayload: any = {};
+        if (req.body.is_kyc_verified !== undefined) {
+          extraPayload.is_kyc_verified = req.body.is_kyc_verified;
+        }
+        if (req.body.demo_wallet_balance !== undefined) {
+          extraPayload.demo_wallet_balance = Number(req.body.demo_wallet_balance);
+        }
+        if (Object.keys(extraPayload).length > 0) {
+          await db.from("profiles").update(extraPayload).eq("email", emailLower);
+        }
       }
     }
 
@@ -777,6 +801,12 @@ app.post("/api/admin/update-user", async (req, res) => {
     memUser.role = role || memUser.role;
     if (wallet_balance !== undefined) {
       memUser.wallet_balance = Number(wallet_balance);
+    }
+    if (req.body.is_kyc_verified !== undefined) {
+      memUser.is_kyc_verified = req.body.is_kyc_verified;
+    }
+    if (req.body.demo_wallet_balance !== undefined) {
+      memUser.demo_wallet_balance = Number(req.body.demo_wallet_balance);
     }
 
     if (didPromoteToMarketer) {
@@ -803,6 +833,31 @@ app.post("/api/admin/update-user", async (req, res) => {
 
   } catch (error: any) {
     res.status(500).json({ error: "Administrative modify exception: " + error.message });
+  }
+});
+
+app.post("/api/admin/delete-user", async (req, res) => {
+  try {
+    const { email, adminEmail, adminUid } = req.body;
+    if (!isAdminAuthorized(adminEmail, adminUid)) {
+      return res.status(403).json({ error: "Access denied. Exclusive administrative clearance required." });
+    }
+    if (!email) {
+      return res.status(400).json({ error: "Email target is required." });
+    }
+    const emailLower = email.toLowerCase().trim();
+    const db = getSupabase();
+    if (db) {
+       const callerUid = adminUid || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99";
+       await db.rpc("admin_delete_profile", { admin_uid: callerUid, target_email: emailLower });
+    }
+    const idx = memoryUsers.findIndex(u => u.email.toLowerCase() === emailLower);
+    if (idx !== -1) {
+      memoryUsers.splice(idx, 1);
+    }
+    res.json({ success: true, message: `Account record for ${email} successfully deleted.` });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -886,4 +941,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.NETLIFY) {
+  startServer();
+}

@@ -17,6 +17,7 @@ import InvestmentsPanel from './components/InvestmentsPanel';
 import DepositWithdrawModal from './components/DepositWithdrawModal';
 import SupportPortal from './components/SupportPortal';
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
+import { getApiUrl } from './lib/api';
 
 import { 
   ShieldCheck, 
@@ -398,6 +399,12 @@ export default function App() {
         }
         // Marginally tick others slightly to make everything look highly responsive!
         if (Math.random() > 0.72) {
+          if (a.category !== 'crypto') {
+            const day = new Date().getDay();
+            if (day === 0 || day === 6) {
+              return a;
+            }
+          }
           const offset = a.price * (Math.random() - 0.495) * (a.category === 'forex' ? 0.0001 : 0.001);
           const adjPrice = Number((a.price + offset).toFixed(a.category === 'forex' ? 4 : 2));
           return { ...a, price: adjPrice };
@@ -458,7 +465,7 @@ export default function App() {
   const onRefreshUserSession = async () => {
     if (!user.email) return;
     try {
-      const resp = await fetch("/api/user/sync", {
+      const resp = await fetch(getApiUrl("/api/user/sync"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: user.email })
@@ -524,7 +531,7 @@ export default function App() {
 
       let synced: any = null;
       try {
-        const resp = await fetch("/api/user/sync", {
+        const resp = await fetch(getApiUrl("/api/user/sync"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
