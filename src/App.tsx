@@ -520,6 +520,9 @@ export default function App() {
     setUser(prev => {
       const updatedUserObj: User = {
         ...prev,
+        loggedIn: synced.loggedIn !== undefined ? synced.loggedIn : prev.loggedIn,
+        email: synced.email || prev.email,
+        name: synced.name || prev.name,
         walletBalance: synced.walletBalance,
         role: synced.role,
         phone: synced.phone || prev.phone || "",
@@ -830,6 +833,7 @@ export default function App() {
         // Unified hydration across all states and LocalStorages
         updateAllSyncedStates({
           ...synced,
+          loggedIn: true,
           role: initialUser.role,
           id: initialUser.id,
           name: initialUser.name,
@@ -844,7 +848,6 @@ export default function App() {
         } else {
           setActiveTab('TERMINAL');
         }
-        addToast(`Successful Authorization! Signed in as ${initialUser.name}`, "SUCCESS");
       }
     } catch (err) {
       addToast("Network failure connection to local authentication provider.", "ERROR");
