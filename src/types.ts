@@ -31,6 +31,8 @@ export interface User {
   kycUploadedAt?: string;
   id?: string; // supabase user uuid
   phone?: string;
+  customBots?: any[];
+  activeBots?: any[];
 }
 
 export interface Position {

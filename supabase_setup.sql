@@ -18,6 +18,17 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS total_deposited NUMERIC(15,
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_kyc_verified TEXT DEFAULT 'unverified';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_wallet_balance NUMERIC(15, 4) DEFAULT 10000.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS active_positions JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_positions JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS custom_bots JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS active_bots JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS copied_allocations JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS staking_subscriptions JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS support_tickets_json JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_profits NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS invested_capital NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS copy_trading_allocated NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS profits_real NUMERIC(15, 4) DEFAULT 0.0000;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
@@ -97,6 +108,11 @@ WITH CHECK (
 CREATE OR REPLACE FUNCTION public.enforce_profile_immutability()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- If executing as system admin, postgres, or service_role, bypass direct client limitations safely
+  IF CURRENT_USER = 'postgres' OR CURRENT_USER = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
   -- If not admin, block changes to sensitive columns
   IF (auth.jwt() ->> 'email') IS DISTINCT FROM 'mutwirib964@gmail.com' THEN
     IF OLD.role IS DISTINCT FROM NEW.role 

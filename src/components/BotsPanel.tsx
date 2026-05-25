@@ -19,6 +19,7 @@ import {
   Zap
 } from 'lucide-react';
 import { Asset, User } from '../types';
+import { getApiUrl } from '../lib/api';
 
 interface BotConfig {
   id: string;
@@ -182,19 +183,6 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     return INITIAL_BOTS;
   });
 
-  const activeSectionRef = useRef<HTMLDivElement>(null);
-
-  // Creation form states
-  const [isCreatorOpen, setIsCreatorOpen] = useState(false);
-  const [newBotName, setNewBotName] = useState('');
-  const [newBotStrategy, setNewBotStrategy] = useState('Stochastic Band Filter');
-  const [newBotAsset, setNewBotAsset] = useState('BTC/USD');
-  const [newBotRisk, setNewBotRisk] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
-  const [newBotLeverage, setNewBotLeverage] = useState(50);
-  const [newBotWinRate, setNewBotWinRate] = useState(90);
-  const [newBotDesc, setNewBotDesc] = useState('');
-
-  // Active instances list (running client-side sets of timers)
   const [activeInstances, setActiveInstances] = useState<ActiveBotInstance[]>(() => {
     const saved = localStorage.getItem('vfx_active_bots_running_state');
     if (saved) {
@@ -224,6 +212,41 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     }
     return [];
   });
+
+  // Synchronize with database-backed updates from parent
+  useEffect(() => {
+    if (user.customBots && user.customBots.length > 0) {
+      const userBots = user.customBots;
+      setBots(prev => {
+        const systemOnly = prev.filter(b => b.creator === 'System');
+        const existingIds = new Set(systemOnly.map(b => b.id));
+        const filteredUserBots = userBots.filter(b => !existingIds.has(b.id));
+        return [...systemOnly, ...filteredUserBots];
+      });
+    }
+  }, [user.customBots]);
+
+  useEffect(() => {
+    if (user.activeBots) {
+      const currentIds = activeInstances.map(i => i.botId).join(',');
+      const incomingIds = user.activeBots.map(i => i.botId).join(',');
+      if (currentIds !== incomingIds) {
+        setActiveInstances(user.activeBots);
+      }
+    }
+  }, [user.activeBots, activeInstances]);
+
+  const activeSectionRef = useRef<HTMLDivElement>(null);
+
+  // Creation form states
+  const [isCreatorOpen, setIsCreatorOpen] = useState(false);
+  const [newBotName, setNewBotName] = useState('');
+  const [newBotStrategy, setNewBotStrategy] = useState('Stochastic Band Filter');
+  const [newBotAsset, setNewBotAsset] = useState('BTC/USD');
+  const [newBotRisk, setNewBotRisk] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
+  const [newBotLeverage, setNewBotLeverage] = useState(50);
+  const [newBotWinRate, setNewBotWinRate] = useState(90);
+  const [newBotDesc, setNewBotDesc] = useState('');
 
   // Start instance form modal states
   const [selectedBotToRun, setSelectedBotToRun] = useState<BotConfig | null>(null);
@@ -285,6 +308,16 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
         }).filter(Boolean) as ActiveBotInstance[];
 
         localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(updated));
+        if (user && user.email) {
+          const completedSome = activeInstances.length !== updated.length;
+          if (completedSome) {
+            fetch(getApiUrl('/api/user/update-state'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: user.email, activeBots: updated })
+            }).catch(e => console.warn(e));
+          }
+        }
         return updated;
       });
     }, 1000);
@@ -330,6 +363,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
     const updatedLedger = [...updatedUserBots, newBot];
     localStorage.setItem('vfx_custom_bots_ledger', JSON.stringify(updatedLedger));
+    if (user && user.email) {
+      fetch(getApiUrl('/api/user/update-state'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, customBots: updatedLedger })
+      }).catch(err => console.warn(err));
+    }
     
     setBots([...systemOnly, ...updatedLedger]);
     setIsCreatorOpen(false);
@@ -398,6 +438,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
         const updatedLedger = [...updatedUserBots, uploadedBot];
         localStorage.setItem('vfx_custom_bots_ledger', JSON.stringify(updatedLedger));
+        if (user && user.email) {
+          fetch(getApiUrl('/api/user/update-state'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: user.email, customBots: updatedLedger })
+          }).catch(err => console.warn(err));
+        }
         
         setBots([...systemOnly, ...updatedLedger]);
         addToast(`Uploaded Bot '${uploadedBot.name}' initialized and deployed successfully.`, "SUCCESS");
@@ -490,6 +537,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     const newInstancesList = [...activeInstances, newInstance];
     setActiveInstances(newInstancesList);
     localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(newInstancesList));
+    if (user && user.email) {
+      fetch(getApiUrl('/api/user/update-state'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, activeBots: newInstancesList })
+      }).catch(e => console.warn(e));
+    }
 
     setSelectedBotToRun(null);
     addToast(`${selectedBotToRun.name} has been deployed. Live feed active.`, "SUCCESS");
@@ -512,6 +566,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     const updated = activeInstances.filter(i => i.botId !== botId);
     setActiveInstances(updated);
     localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(updated));
+    if (user && user.email) {
+      fetch(getApiUrl('/api/user/update-state'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, activeBots: updated })
+      }).catch(e => console.warn(e));
+    }
 
     addToast(`Bot pipeline terminated manually. 90% collateral allocation ($${refund.toLocaleString()}) refunded to account.`, "WARNING");
   };

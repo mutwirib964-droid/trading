@@ -54,13 +54,6 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
   // Generate initial simulated candles based on a professional Brownian motion random walk
   useEffect(() => {
     const cacheKey = `${activeAsset.id}_${timeframe}`;
-    if (globalCandleCache[cacheKey]) {
-      setCandles(globalCandleCache[cacheKey]);
-      tickCounterRef.current = 0;
-      loadedKeyRef.current = cacheKey;
-      return;
-    }
-
     const basePrice = activeAsset.price;
     const change24h = activeAsset.change24h || 0;
     const initialCandles: ChartCandle[] = [];
@@ -207,15 +200,6 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
     lastTimeBlockRef.current = Math.floor(now / periodMs);
 
     const intervalId = setInterval(() => {
-      // 1. Enforce Market Hours constraints (forex & stocks closed on weekends, crypto 24/7)
-      if (currentCategory !== 'crypto') {
-        const day = new Date().getDay();
-        if (day === 0 || day === 6) {
-          setCountdownText('CLOSED');
-          return;
-        }
-      }
-
       if (candles.length === 0) return;
 
       const loadedKey = loadedKeyRef.current;
@@ -385,7 +369,10 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
   // Projection coordinate conversions
   const getX = (index: number) => {
     const paddedZoom = zoomLevel + 1.8;
-    return (index / paddedZoom) * drawableWidth + leftMargin;
+    const spaceBetweenCandles = drawableWidth / paddedZoom;
+    const baseX = (index / paddedZoom) * drawableWidth + leftMargin;
+    // Smooth scrolling offset translates the entire coordinate space seamlessly during ticking periods, making spawn moments 100% silent and jump-free!
+    return baseX - (progressFraction * spaceBetweenCandles);
   };
 
   const getY = (price: number) => {
@@ -476,7 +463,8 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
     const relativeX = (x / rect.width) * chartWidth;
     const adjustedX = relativeX - leftMargin;
     const paddedZoom = zoomLevel + 1.8;
-    const indexFloat = (adjustedX / drawableWidth) * paddedZoom;
+    // Account for smooth progressFraction scrolling offset on horizontal focus
+    const indexFloat = ((adjustedX / drawableWidth) * paddedZoom) + progressFraction;
     const index = Math.min(zoomLevel - 1, Math.max(0, Math.round(indexFloat)));
 
     if (visibleCandles[index]) {

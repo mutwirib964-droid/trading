@@ -88,6 +88,18 @@ interface UserMemory {
   phone?: string;
   is_kyc_verified?: string;
   demo_wallet_balance?: number;
+  demo_profits?: number;
+  invested_capital?: number;
+  copy_trading_allocated?: number;
+  profits_real?: number;
+  active_positions?: any[];
+  demo_positions?: any[];
+  custom_bots?: any[];
+  active_bots?: any[];
+  copied_allocations?: any;
+  staking_subscriptions?: any[];
+  support_tickets_json?: any[];
+  [key: string]: any;
 }
 interface TxMemory {
   id: string;
@@ -318,7 +330,20 @@ app.post("/api/user/sync", async (req, res) => {
         role: profile.role || (isAdmin ? "admin" : "user"),
         walletBalance: profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
         phone: profile.phone || "",
-        transactions: transactions
+        transactions: transactions,
+        demoBalance: profile.demo_wallet_balance !== undefined ? Number(profile.demo_wallet_balance) : 10000.0,
+        demoProfits: profile.demo_profits !== undefined ? Number(profile.demo_profits) : 0,
+        investedCapital: profile.invested_capital !== undefined ? Number(profile.invested_capital) : 0,
+        copyTradingAllocated: profile.copy_trading_allocated !== undefined ? Number(profile.copy_trading_allocated) : 0,
+        profits: profile.profits_real !== undefined ? Number(profile.profits_real) : 0,
+        activePositions: profile.active_positions || [],
+        demoPositions: profile.demo_positions || [],
+        customBots: profile.custom_bots || [],
+        activeBots: profile.active_bots || [],
+        copiedTraderAllocations: profile.copied_allocations || {},
+        activeStakingSubscriptions: profile.staking_subscriptions || [],
+        supportTickets: profile.support_tickets_json || [],
+        isKycVerified: profile.is_kyc_verified || "unverified"
       });
     }
 
@@ -348,7 +373,20 @@ app.post("/api/user/sync", async (req, res) => {
       role: memUser.role,
       walletBalance: memUser.wallet_balance,
       phone: memUser.phone || "",
-      transactions: transactions
+      transactions: transactions,
+      demoBalance: memUser.demo_wallet_balance !== undefined ? Number(memUser.demo_wallet_balance) : 10000.0,
+      demoProfits: memUser.demo_profits !== undefined ? Number(memUser.demo_profits) : 0,
+      investedCapital: memUser.invested_capital !== undefined ? Number(memUser.invested_capital) : 0,
+      copyTradingAllocated: memUser.copy_trading_allocated !== undefined ? Number(memUser.copy_trading_allocated) : 0,
+      profits: memUser.profits_real !== undefined ? Number(memUser.profits_real) : 0,
+      activePositions: memUser.active_positions || [],
+      demoPositions: memUser.demo_positions || [],
+      customBots: memUser.custom_bots || [],
+      activeBots: memUser.active_bots || [],
+      copiedTraderAllocations: memUser.copied_allocations || {},
+      activeStakingSubscriptions: memUser.staking_subscriptions || [],
+      supportTickets: memUser.support_tickets_json || [],
+      isKycVerified: memUser.is_kyc_verified || "unverified"
     });
   } catch (err: any) {
     console.error("[Fatal /api/user/sync Exception] Falling back anyway to robust default login:", err);
@@ -362,8 +400,116 @@ app.post("/api/user/sync", async (req, res) => {
       role: isAdmin ? "admin" : "user",
       walletBalance: isAdmin ? 1000 : 0,
       phone: "",
-      transactions: []
+      transactions: [],
+      demoBalance: 10000.0,
+      demoProfits: 0,
+      investedCapital: 0,
+      copyTradingAllocated: 0,
+      profits: 0,
+      activePositions: [],
+      demoPositions: [],
+      customBots: [],
+      activeBots: [],
+      copiedTraderAllocations: {},
+      activeStakingSubscriptions: [],
+      supportTickets: [],
+      isKycVerified: "unverified"
     });
+  }
+});
+
+// Endpoint to update overall user state (positions, custom bots, running instances, support tickets, staked subscriptions, copied allocation stats, etc.)
+app.post("/api/user/update-state", async (req, res) => {
+  try {
+    const { 
+      email,
+      walletBalance,
+      demoBalance,
+      demoProfits,
+      investedCapital,
+      copyTradingAllocated,
+      profits,
+      activePositions,
+      demoPositions,
+      customBots,
+      activeBots,
+      copiedTraderAllocations,
+      activeStakingSubscriptions,
+      supportTickets,
+      isKycVerified,
+      phone
+    } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required to update state." });
+    }
+
+    const emailLower = email.toLowerCase().trim();
+
+    // 1. Update in-memory fallback
+    let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+    if (!memUser) {
+      memUser = {
+        id: `user-mem-${Date.now()}`,
+        email: emailLower,
+        role: "user",
+        wallet_balance: walletBalance !== undefined ? Number(walletBalance) : 0,
+        total_deposited: walletBalance !== undefined ? Number(walletBalance) : 0
+      };
+      memoryUsers.push(memUser);
+    }
+
+    if (walletBalance !== undefined) memUser.wallet_balance = Number(walletBalance);
+    if (demoBalance !== undefined) memUser.demo_wallet_balance = Number(demoBalance);
+    if (demoProfits !== undefined) memUser.demo_profits = Number(demoProfits);
+    if (investedCapital !== undefined) memUser.invested_capital = Number(investedCapital);
+    if (copyTradingAllocated !== undefined) memUser.copy_trading_allocated = Number(copyTradingAllocated);
+    if (profits !== undefined) memUser.profits_real = Number(profits);
+    if (activePositions !== undefined) memUser.active_positions = activePositions;
+    if (demoPositions !== undefined) memUser.demo_positions = demoPositions;
+    if (customBots !== undefined) memUser.custom_bots = customBots;
+    if (activeBots !== undefined) memUser.active_bots = activeBots;
+    if (copiedTraderAllocations !== undefined) memUser.copied_allocations = copiedTraderAllocations;
+    if (activeStakingSubscriptions !== undefined) memUser.staking_subscriptions = activeStakingSubscriptions;
+    if (supportTickets !== undefined) memUser.support_tickets_json = supportTickets;
+    if (isKycVerified !== undefined) memUser.is_kyc_verified = isKycVerified;
+    if (phone !== undefined) memUser.phone = phone;
+
+    // 2. Update Supabase
+    const db = getSupabase();
+    if (db) {
+      try {
+        const updatePayload: any = {};
+        if (walletBalance !== undefined) updatePayload.wallet_balance = Number(walletBalance);
+        if (demoBalance !== undefined) updatePayload.demo_wallet_balance = Number(demoBalance);
+        if (demoProfits !== undefined) updatePayload.demo_profits = Number(demoProfits);
+        if (investedCapital !== undefined) updatePayload.invested_capital = Number(investedCapital);
+        if (copyTradingAllocated !== undefined) updatePayload.copy_trading_allocated = Number(copyTradingAllocated);
+        if (profits !== undefined) updatePayload.profits_real = Number(profits);
+        if (activePositions !== undefined) updatePayload.active_positions = activePositions;
+        if (demoPositions !== undefined) updatePayload.demo_positions = demoPositions;
+        if (customBots !== undefined) updatePayload.custom_bots = customBots;
+        if (activeBots !== undefined) updatePayload.active_bots = activeBots;
+        if (copiedTraderAllocations !== undefined) updatePayload.copied_allocations = copiedTraderAllocations;
+        if (activeStakingSubscriptions !== undefined) updatePayload.staking_subscriptions = activeStakingSubscriptions;
+        if (supportTickets !== undefined) updatePayload.support_tickets_json = supportTickets;
+        if (isKycVerified !== undefined) updatePayload.is_kyc_verified = isKycVerified;
+        if (phone !== undefined) updatePayload.phone = phone;
+        updatePayload.updated_at = new Date().toISOString();
+
+        const { error: updErr } = await db.from("profiles").update(updatePayload).eq("email", emailLower);
+        if (updErr) {
+          console.warn("[update-state] Database update profile errored, but in-memory sync succeeded:", updErr.message);
+        }
+      } catch (dbErr: any) {
+        console.error("[update-state] Database exception error:", dbErr.message || dbErr);
+      }
+    }
+
+    return res.json({ success: true, message: "User state successfully backed up." });
+  } catch (err: any) {
+    console.error("Fatal exception in /api/user/update-state:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

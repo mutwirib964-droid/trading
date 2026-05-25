@@ -248,6 +248,30 @@ export default function App() {
       setActiveStakingSubscriptions(updatedStaking);
       localStorage.setItem('vfx_staking_subs', JSON.stringify(updatedStaking));
     }
+
+    // BACKEND SYNC (Persist user states to database/memory fallback)
+    if (updatedUser.loggedIn && updatedUser.email) {
+      fetch(getApiUrl("/api/user/update-state"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: updatedUser.email,
+          walletBalance: updatedUser.walletBalance,
+          demoBalance: updatedUser.demoBalance,
+          demoProfits: updatedUser.demoProfits,
+          investedCapital: updatedUser.investedCapital,
+          copyTradingAllocated: updatedUser.copyTradingAllocated,
+          profits: updatedUser.profits,
+          activePositions: updatedUser.activePositions,
+          demoPositions: updatedUser.demoPositions,
+          copiedTraderAllocations: updatedCopied || copiedTraderAllocations,
+          activeStakingSubscriptions: updatedStaking || activeStakingSubscriptions,
+          supportTickets: updatedTickets || supportTickets,
+          isKycVerified: updatedUser.isKycVerified,
+          phone: updatedUser.phone
+        })
+      }).catch(err => console.warn("Silent background update-state error on persistState:", err));
+    }
   };
 
   // Maintain reference values of states that change to avoid resetting the background intervals
@@ -400,18 +424,6 @@ export default function App() {
             sparkline: [...a.sparkline.slice(1), newPrice]
           };
         }
-        // Marginally tick others slightly to make everything look highly responsive!
-        if (Math.random() > 0.72) {
-          if (a.category !== 'crypto') {
-            const day = new Date().getDay();
-            if (day === 0 || day === 6) {
-              return a;
-            }
-          }
-          const offset = a.price * (Math.random() - 0.495) * (a.category === 'forex' ? 0.0001 : 0.001);
-          const adjPrice = Number((a.price + offset).toFixed(a.category === 'forex' ? 4 : 2));
-          return { ...a, price: adjPrice };
-        }
         return a;
       })
     );
@@ -464,6 +476,108 @@ export default function App() {
     }
   }, []);
 
+  // Background ticker that fluctuates all INACTIVE assets continuously so the entire market catalog moves live!
+  useEffect(() => {
+    const backgroundTicker = setInterval(() => {
+      setAssets((prev) =>
+        prev.map((a) => {
+          // If it is the selected asset, let the chart's precise tick handle it to prevent collisions
+          if (a.id === selectedAssetId) {
+            return a;
+          }
+
+          // Random walks - highly live and synchronized movements matches active chart's speed and volatility
+          const isForex = a.category === 'forex';
+          let baseVol = 0.00035; // default (crypto/commodities) (perfect responsive volatility)
+          if (a.category === 'forex') baseVol = 0.000045;
+          else if (a.category === 'stocks') baseVol = 0.00014;
+
+          const randomWalk = (Math.random() - 0.5) * baseVol;
+          const nextPrice = a.price * (1 + randomWalk);
+          const finalPrice = Number(nextPrice.toFixed(isForex ? 4 : 2));
+
+          const changeRatio = (finalPrice - a.price) / a.price;
+          // Slowly drift 24h change dynamically
+          const nextChange24h = Number((a.change24h + changeRatio * 85).toFixed(2));
+
+          return {
+            ...a,
+            price: finalPrice,
+            change24h: nextChange24h,
+            sparkline: [...a.sparkline.slice(1), finalPrice]
+          };
+        })
+      );
+    }, 500); // 500ms interval for extremely active live movements of other assets!
+
+    return () => clearInterval(backgroundTicker);
+  }, [selectedAssetId]);
+
+  const updateAllSyncedStates = (synced: any) => {
+    if (!synced) return;
+    
+    // 1. Update User Details
+    setUser(prev => {
+      const updatedUserObj: User = {
+        ...prev,
+        walletBalance: synced.walletBalance,
+        role: synced.role,
+        phone: synced.phone || prev.phone || "",
+        demoBalance: synced.demoBalance !== undefined ? synced.demoBalance : prev.demoBalance,
+        demoProfits: synced.demoProfits !== undefined ? synced.demoProfits : prev.demoProfits,
+        investedCapital: synced.investedCapital !== undefined ? synced.investedCapital : prev.investedCapital,
+        copyTradingAllocated: synced.copyTradingAllocated !== undefined ? synced.copyTradingAllocated : prev.copyTradingAllocated,
+        profits: synced.profits !== undefined ? synced.profits : prev.profits,
+        activePositions: synced.activePositions || prev.activePositions || [],
+        demoPositions: synced.demoPositions || prev.demoPositions || [],
+        isKycVerified: synced.isKycVerified || prev.isKycVerified || "unverified",
+        customBots: synced.customBots || prev.customBots || [],
+        activeBots: synced.activeBots || prev.activeBots || []
+      };
+      localStorage.setItem('vfx_user_session', JSON.stringify(updatedUserObj));
+      // Save backing backup too
+      localStorage.setItem(`vfx_backup_${synced.email.toLowerCase()}`, JSON.stringify({
+        user: updatedUserObj,
+        transactions: synced.transactions || [],
+        copiedTraderAllocations: synced.copiedTraderAllocations || {},
+        activeStakingSubscriptions: synced.activeStakingSubscriptions || []
+      }));
+      return updatedUserObj;
+    });
+
+    // 2. Set granular Local Storage backups to sync widgets on different tabs/subcomponents
+    if (synced.customBots) {
+      localStorage.setItem('vfx_custom_bots_ledger', JSON.stringify(synced.customBots));
+    }
+    if (synced.activeBots) {
+      localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(synced.activeBots));
+    }
+
+    // 3. Set support tickets
+    if (synced.supportTickets) {
+      setSupportTickets(synced.supportTickets);
+      localStorage.setItem('vfx_support_tickets_ledger', JSON.stringify(synced.supportTickets));
+    }
+
+    // 4. Set copied allocations
+    if (synced.copiedTraderAllocations) {
+      setCopiedTraderAllocations(synced.copiedTraderAllocations);
+      localStorage.setItem('vfx_copied_allocations', JSON.stringify(synced.copiedTraderAllocations));
+    }
+
+    // 5. Set active staking subscriptions
+    if (synced.activeStakingSubscriptions) {
+      setActiveStakingSubscriptions(synced.activeStakingSubscriptions);
+      localStorage.setItem('vfx_staking_subs', JSON.stringify(synced.activeStakingSubscriptions));
+    }
+
+    // 6. Set Transactions if synced contains transaction database records
+    if (synced.transactions && synced.transactions.length > 0) {
+      setTransactions(synced.transactions);
+      localStorage.setItem('vfx_transactions_ledger', JSON.stringify(synced.transactions));
+    }
+  };
+
   // Real-time synchronization helper
   const onRefreshUserSession = async () => {
     if (!user.email) return;
@@ -475,16 +589,7 @@ export default function App() {
       });
       if (resp.ok) {
         const synced = await resp.json();
-        setUser(prev => {
-          const updated = {
-            ...prev,
-            walletBalance: synced.walletBalance,
-            role: synced.role,
-            phone: synced.phone || prev.phone || ""
-          };
-          localStorage.setItem('vfx_user_session', JSON.stringify(updated));
-          return updated;
-        });
+        updateAllSyncedStates(synced);
       }
     } catch (e) {
       console.error("Synching profile error: ", e);
@@ -504,25 +609,30 @@ export default function App() {
         });
         if (resp.ok) {
           const synced = await resp.json();
-          const currentRoleRef = userRef.current.role;
-          const currentBalanceRef = userRef.current.walletBalance;
-          if (synced.role !== currentRoleRef || synced.walletBalance !== currentBalanceRef) {
-            setUser(prev => {
-              const updated = {
-                ...prev,
-                walletBalance: synced.walletBalance,
-                role: synced.role,
-                phone: synced.phone || prev.phone || ""
-              };
-              localStorage.setItem('vfx_user_session', JSON.stringify(updated));
-              return updated;
-            });
+          const cur = userRef.current;
+          
+          // Check if any state is different and needs hydration
+          const hasChanged = 
+            synced.role !== cur.role ||
+            synced.walletBalance !== cur.walletBalance ||
+            synced.demoBalance !== cur.demoBalance ||
+            synced.isKycVerified !== cur.isKycVerified ||
+            JSON.stringify(synced.activePositions || []) !== JSON.stringify(cur.activePositions || []) ||
+            JSON.stringify(synced.demoPositions || []) !== JSON.stringify(cur.demoPositions || []) ||
+            JSON.stringify(synced.customBots || []) !== JSON.stringify(cur.customBots || []) ||
+            JSON.stringify(synced.activeBots || []) !== JSON.stringify(cur.activeBots || []) ||
+            JSON.stringify(synced.supportTickets || []) !== JSON.stringify(supportTicketsRef.current || []) ||
+            JSON.stringify(synced.activeStakingSubscriptions || []) !== JSON.stringify(activeStakingSubscriptionsRef.current || []) ||
+            JSON.stringify(synced.copiedTraderAllocations || {}) !== JSON.stringify(copiedTraderAllocationsRef.current || {});
+
+          if (hasChanged) {
+            updateAllSyncedStates(synced);
           }
         }
       } catch (e) {
         console.warn("Silent background profile sync error:", e);
       }
-    }, 3500);
+    }, 4500);
 
     return () => clearInterval(syncInterval);
   }, [user.loggedIn, user.email]);
@@ -690,16 +800,18 @@ export default function App() {
           walletBalance: synced.walletBalance,
           role: isAdmin ? 'admin' : (synced.role || 'user'),
           id: userUid || (synced.email.toLowerCase() === 'mutwirib964@gmail.com' ? 'ccd28f9c-f070-455e-9cdb-e4ee2f26ac99' : ''),
-          investedCapital: oldInvested,
-          profits: oldProfits,
-          copyTradingAllocated: oldCopy,
-          activePositions: oldPositions,
-          isKycVerified: isAdmin ? 'verified' : oldKyc,
+          investedCapital: synced.investedCapital !== undefined ? synced.investedCapital : oldInvested,
+          profits: synced.profits !== undefined ? synced.profits : oldProfits,
+          copyTradingAllocated: synced.copyTradingAllocated !== undefined ? synced.copyTradingAllocated : oldCopy,
+          activePositions: (synced.activePositions && synced.activePositions.length > 0) ? synced.activePositions : oldPositions,
+          isKycVerified: isAdmin ? 'verified' : (synced.isKycVerified || oldKyc),
           accountMode: oldAccountMode,
-          demoBalance: oldDemoBalance,
-          demoPositions: oldDemoPositions,
-          demoProfits: oldDemoProfits,
-          phone: synced.phone || ""
+          demoBalance: synced.demoBalance !== undefined ? synced.demoBalance : oldDemoBalance,
+          demoPositions: (synced.demoPositions && synced.demoPositions.length > 0) ? synced.demoPositions : oldDemoPositions,
+          demoProfits: synced.demoProfits !== undefined ? synced.demoProfits : oldDemoProfits,
+          phone: synced.phone || "",
+          customBots: synced.customBots || [],
+          activeBots: synced.activeBots || []
         };
 
         const setupTx: Transaction[] = (synced.transactions && synced.transactions.length > 0)
@@ -715,8 +827,17 @@ export default function App() {
               }
             ] : []));
 
-        // Re-write to state + local storage so everything connects
-        persistState(initialUser, setupTx, supportTickets, oldCopiedAlloc, oldStakingSub);
+        // Unified hydration across all states and LocalStorages
+        updateAllSyncedStates({
+          ...synced,
+          role: initialUser.role,
+          id: initialUser.id,
+          name: initialUser.name,
+          transactions: setupTx,
+          supportTickets: synced.supportTickets || supportTickets,
+          copiedTraderAllocations: synced.copiedTraderAllocations || oldCopiedAlloc,
+          activeStakingSubscriptions: synced.activeStakingSubscriptions || oldStakingSub
+        });
         
         if (isAdmin) {
           setActiveTab('ADMIN');

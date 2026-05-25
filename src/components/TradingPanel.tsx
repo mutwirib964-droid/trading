@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Asset, User, Position } from '../types';
 import { Shield, AlertTriangle, TrendingUp, TrendingDown, Layers, BookOpen, Clock } from 'lucide-react';
 
@@ -25,20 +25,33 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
     setLimitPrice(activeAsset.price.toString());
   }, [activeAsset.id]);
 
+  // Track active asset's latest price in a ref to avoid resetting the 5-second interval on every price tick
+  const latestPriceRef = useRef(activeAsset.price);
+  const assetCategoryRef = useRef(activeAsset.category);
+
+  useEffect(() => {
+    latestPriceRef.current = activeAsset.price;
+  }, [activeAsset.price]);
+
+  useEffect(() => {
+    assetCategoryRef.current = activeAsset.category;
+  }, [activeAsset.category]);
+
   // Simulate OrderBook movements
   useEffect(() => {
-    const base = activeAsset.price;
     const generateOrderBook = () => {
+      const base = latestPriceRef.current;
+      const category = assetCategoryRef.current;
       const generatedBids: { price: number; size: number }[] = [];
       const generatedAsks: { price: number; size: number }[] = [];
       for (let i = 1; i <= 6; i++) {
-        const spread = base * (activeAsset.category === 'forex' ? 0.0001 : 0.001) * i;
+        const spread = base * (category === 'forex' ? 0.0001 : 0.001) * i;
         generatedBids.push({
-          price: Number((base - spread).toFixed(activeAsset.category === 'forex' ? 4 : 2)),
+          price: Number((base - spread).toFixed(category === 'forex' ? 4 : 2)),
           size: Math.random() * 5 + 0.1
         });
         generatedAsks.push({
-          price: Number((base + spread).toFixed(activeAsset.category === 'forex' ? 4 : 2)),
+          price: Number((base + spread).toFixed(category === 'forex' ? 4 : 2)),
           size: Math.random() * 5 + 0.1
         });
       }
@@ -47,9 +60,9 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
     };
 
     generateOrderBook();
-    const interval = setInterval(generateOrderBook, 2800);
+    const interval = setInterval(generateOrderBook, 5000);
     return () => clearInterval(interval);
-  }, [activeAsset.price, activeAsset.id]);
+  }, [activeAsset.id]);
 
   const priceToUse = orderMode === 'MARKET' ? activeAsset.price : (parseFloat(limitPrice) || activeAsset.price);
   const totalMargin = parseFloat(usdAmount) || 0;
