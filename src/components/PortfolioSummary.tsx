@@ -33,9 +33,9 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             ${(isDemo ? (user.demoBalance ?? 10000) : user.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </h2>
           <div className="flex items-center gap-1 text-[9px] text-gray-500 font-mono uppercase tracking-wider">
-            <span>{isDemo ? "PRACTICE MARGIN" : "PREMIUM TRADING"}</span>
-            <div className={`w-1 h-1 rounded-full ${isDemo ? "bg-amber-400" : "bg-emerald-500"}`} />
-            <span className={isDemo ? "text-amber-400" : "text-emerald-400"}>{isDemo ? "SIMULATED" : "SECURED"}</span>
+            <span>{"TRADING BALANCE"}</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className="text-emerald-400">{"SECURED"}</span>
           </div>
         </div>
 
@@ -101,7 +101,7 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             <div className="grid grid-cols-3 gap-1.5 text-[8.5px] text-gray-500 mt-1">
               <div className="flex items-center gap-1 truncate col-span-1">
                 <div className={`w-1.5 h-1.5 rounded shrink-0 ${isDemo ? "bg-amber-500" : "bg-emerald-500"}`} />
-                <span className="truncate">{isDemo ? 'Demo Balance' : `Wallet (${Math.round((user.walletBalance / (totalWealth || 1)) * 100)}%)`}</span>
+                <span className="truncate">{isDemo ? 'Trading Balance' : `Wallet (${Math.round((user.walletBalance / (totalWealth || 1)) * 100)}%)`}</span>
               </div>
               {!isDemo && (
                 <>
@@ -134,15 +134,15 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             <h3 className={`text-xl md:text-2xl font-bold font-mono tracking-tight ${netEarnings >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {netEarnings >= 0 ? '+' : ''}${netEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </h3>
-            <p className="text-[9px] font-mono text-gray-500 uppercase">{isDemo ? "PRACTICE PERFORMANCE" : "REALIZED NET PROFIT"}</p>
+            <p className="text-[9px] font-mono text-gray-500 uppercase">{"REALIZED NET PROFIT"}</p>
           </div>
 
           <div className="flex items-center justify-between bg-gray-900/60 p-2 rounded border border-gray-850 text-[9px] font-mono">
             <div className="flex items-center gap-1 text-gray-400">
               <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
-              <span>{isDemo ? "Demo simulator:" : "Copy trading yield:"}</span>
+              <span>{"Copy tracking yield:"}</span>
             </div>
-            <span className="text-emerald-400 font-bold">{isDemo ? "ACTIVE" : "+2.48% (24H)"}</span>
+            <span className="text-emerald-400 font-bold">{"+2.48% (24H)"}</span>
           </div>
         </div>
       </div>

@@ -7,9 +7,10 @@ interface TradingPanelProps {
   user: User;
   onTradeExecute: (position: Omit<Position, 'id' | 'timestamp' | 'pnl' | 'currentPrice'>) => void;
   onClosePosition: (id: string, pnl: number) => void;
+  addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO') => void;
 }
 
-export default function TradingPanel({ activeAsset, user, onTradeExecute, onClosePosition }: TradingPanelProps) {
+export default function TradingPanel({ activeAsset, user, onTradeExecute, onClosePosition, addToast }: TradingPanelProps) {
   const [tradeType, setTradeType] = useState<'BUY' | 'SELL'>('BUY');
   const [orderMode, setOrderMode] = useState<'MARKET' | 'LIMIT'>('MARKET');
   const [limitPrice, setLimitPrice] = useState(activeAsset.price.toString());
@@ -65,12 +66,12 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
     if (totalMargin <= 0) return;
 
     if (user.accountMode === 'REAL' && totalMargin < 10) {
-      alert("The minimum manual trade stake is $10 for Real accounts.");
+      addToast("The minimum manual trade stake is $10 for Real accounts.", "ERROR");
       return;
     }
 
     if (totalMargin > user.walletBalance) {
-      alert("Insufficient wallet balance for this margin commitment.");
+      addToast("Insufficient wallet balance for this margin commitment.", "ERROR");
       return;
     }
 
@@ -298,10 +299,10 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
         <div className="space-y-3">
           <div className="flex items-center gap-1.5 pb-1.5 border-b border-gray-800/60">
             <Shield className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-white text-[11px] font-bold font-sans uppercase">AuraTrade Security Layer</span>
+            <span className="text-white text-[11px] font-bold font-sans uppercase">Institutional Security Guard</span>
           </div>
           <p className="text-[10px] text-gray-400 leading-relaxed font-sans">
-            VexcoinFX Elite incorporates state-of-the-art cold multi-signature wallets and strict institutional banking policies (including segmented liquidity preservation). Live-trades are simulated using institutional execution parameters.
+            VexcoinFX Elite incorporates state-of-the-art cold multi-signature wallets and strict institutional banking policies (including segmented liquidity preservation). All live orders are executed under optimal market parameters.
           </p>
 
           <div className="space-y-2 font-mono text-[9px] text-gray-500 border-t border-gray-850 pt-2.5">

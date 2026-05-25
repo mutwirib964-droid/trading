@@ -702,16 +702,18 @@ export default function App() {
           phone: synced.phone || ""
         };
 
-        const setupTx: Transaction[] = (oldTx && oldTx.length > 0) ? oldTx : (synced.walletBalance > 0 ? [
-          {
-            id: 't-init',
-            type: 'DEPOSIT',
-            amount: synced.walletBalance,
-            asset: 'USDT (Admin Alloc)',
-            date: new Date().toISOString(),
-            status: 'COMPLETED'
-          }
-        ] : []);
+        const setupTx: Transaction[] = (synced.transactions && synced.transactions.length > 0)
+          ? synced.transactions
+          : ((oldTx && oldTx.length > 0) ? oldTx : (synced.walletBalance > 0 ? [
+              {
+                id: 't-init',
+                type: 'DEPOSIT',
+                amount: synced.walletBalance,
+                asset: 'USDT (Admin Alloc)',
+                date: new Date().toISOString(),
+                status: 'COMPLETED'
+              }
+            ] : []));
 
         // Re-write to state + local storage so everything connects
         persistState(initialUser, setupTx, supportTickets, oldCopiedAlloc, oldStakingSub);
@@ -776,6 +778,13 @@ export default function App() {
   // Trade executions logic
   const handleTradeExecute = (posDetails: Omit<Position, 'id' | 'timestamp' | 'pnl' | 'currentPrice'>) => {
     const isDemo = user.accountMode === 'DEMO';
+    const currentBalance = isDemo ? (user.demoBalance ?? 10000) : user.walletBalance;
+
+    if (posDetails.margin > currentBalance) {
+      addToast(`Insufficient money in card! Available ${isDemo ? 'Demo' : 'Real'} portfolio: $${currentBalance.toLocaleString()}. Required margin: $${posDetails.margin.toLocaleString()}.`, 'ERROR');
+      return;
+    }
+
     const newPosition: Position = {
       ...posDetails,
       id: `p-${Date.now()}`,
@@ -802,6 +811,7 @@ export default function App() {
     }
 
     persistState(updatedUser, transactions, supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+    addToast(`Successfully executed ${posDetails.type.toUpperCase()} contract on ${posDetails.assetSymbol} with $${posDetails.margin.toLocaleString()} margin collateral!`, 'SUCCESS');
   };
 
   const handleClosePosition = (id: string, pnl: number) => {
@@ -853,6 +863,12 @@ export default function App() {
     };
 
     persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+    
+    if (pnl >= 0) {
+      addToast(`Position on ${matchSymbol} closed in profit! Settlement payout of +$${pnl.toFixed(2)} recorded on ledger.`, 'SUCCESS');
+    } else {
+      addToast(`Position on ${matchSymbol} closed in loss. Writeoff of -$${Math.abs(pnl).toFixed(2)} recorded on ledger.`, 'ERROR');
+    }
   };
 
   const handleModifyUserBalance = (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string) => {
@@ -907,11 +923,19 @@ export default function App() {
 
   // Copy trading allocations
   const handleAllocateCopy = (traderId: string, amount: number) => {
+    const isDemo = user.accountMode === 'DEMO';
+    const currentBalance = isDemo ? (user.demoBalance ?? 10000) : user.walletBalance;
+
+    if (amount > currentBalance) {
+      addToast(`Insufficient trading capital! Available portfolio: $${currentBalance.toLocaleString()}. Required allocation: $${amount.toLocaleString()}.`, 'ERROR');
+      return;
+    }
+
     const updatedCopiedAllocations = { ...copiedTraderAllocations };
     updatedCopiedAllocations[traderId] = (updatedCopiedAllocations[traderId] || 0) + amount;
 
     let updatedUser: User;
-    if (user.accountMode === 'DEMO') {
+    if (isDemo) {
       updatedUser = {
         ...user,
         demoBalance: Number(((user.demoBalance ?? 10000) - amount).toFixed(2)),
@@ -929,12 +953,13 @@ export default function App() {
       id: `tx-copy-${Date.now()}`,
       type: 'COPY_ALLOCATE',
       amount,
-      asset: `${user.accountMode === 'DEMO' ? '[DEMO] ' : ''}Allocation Trade`,
+      asset: `${isDemo ? '[DEMO] ' : ''}Allocation Trade`,
       date: new Date().toISOString(),
       status: 'COMPLETED'
     };
 
     persistState(updatedUser, [newTx, ...transactions], supportTickets, updatedCopiedAllocations, activeStakingSubscriptions);
+    addToast(`Successfully allocated $${amount.toLocaleString()} for expert mirror copy-trading!`, 'SUCCESS');
   };
 
   const handleReleaseCopy = (traderId: string) => {
@@ -969,11 +994,19 @@ export default function App() {
     };
 
     persistState(updatedUser, [newTx, ...transactions], supportTickets, updatedCopiedAllocations, activeStakingSubscriptions);
+    addToast(`Successfully released allocation! Refunded $${refund.toLocaleString()} straight to your main portfolio.`, 'SUCCESS');
   };
 
   // Staking enrollment
   const handleSubscribeStaking = (planId: string, amount: number) => {
     const matchingPlan = INITIAL_STAKING_PLANS.find((p) => p.id === planId)!;
+    const isDemo = user.accountMode === 'DEMO';
+    const currentBalance = isDemo ? (user.demoBalance ?? 10000) : user.walletBalance;
+
+    if (amount > currentBalance) {
+      addToast(`Insufficient trading capital! Available portfolio: $${currentBalance.toLocaleString()}. Required stake: $${amount.toLocaleString()}.`, 'ERROR');
+      return;
+    }
     
     const newSubscription = {
       id: `stk-${Date.now()}`,
@@ -985,7 +1018,7 @@ export default function App() {
     };
 
     let updatedUser: User;
-    if (user.accountMode === 'DEMO') {
+    if (isDemo) {
       updatedUser = {
         ...user,
         demoBalance: Number(((user.demoBalance ?? 10000) - amount).toFixed(2)),
@@ -1003,20 +1036,22 @@ export default function App() {
       id: `tx-stake-${Date.now()}`,
       type: 'INVEST',
       amount,
-      asset: `${user.accountMode === 'DEMO' ? '[DEMO] ' : ''}${matchingPlan.name}`,
+      asset: `${isDemo ? '[DEMO] ' : ''}${matchingPlan.name}`,
       date: new Date().toISOString(),
       status: 'COMPLETED'
     };
 
     const updatedStaking = [...activeStakingSubscriptions, newSubscription];
     persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, updatedStaking);
+    addToast(`Successfully enrolled stake of $${amount.toLocaleString()} into the ${matchingPlan.name} smart plan!`, 'SUCCESS');
   };
 
   const handleRedeemStaking = (id: string, amount: number, accrued: number) => {
     const payout = amount + accrued;
+    const isDemo = user.accountMode === 'DEMO';
     
     let updatedUser: User;
-    if (user.accountMode === 'DEMO') {
+    if (isDemo) {
       updatedUser = {
         ...user,
         demoBalance: Number(((user.demoBalance ?? 10000) + payout).toFixed(2)),
@@ -1036,13 +1071,14 @@ export default function App() {
       id: `tx-redeem-${Date.now()}`,
       type: 'REDEEM',
       amount: payout,
-      asset: `${user.accountMode === 'DEMO' ? '[DEMO] ' : ''}Maturity Payout`,
+      asset: `${isDemo ? '[DEMO] ' : ''}Maturity Payout`,
       date: new Date().toISOString(),
       status: 'COMPLETED'
     };
 
     const updatedStaking = activeStakingSubscriptions.filter((s) => s.id !== id);
     persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, updatedStaking);
+    addToast(`Successfully redeemed maturity staking rewards! Credited total payout of $${payout.toLocaleString()} to portfolio.`, 'SUCCESS');
   };
 
   // KYC adjustments
@@ -1114,9 +1150,17 @@ export default function App() {
   };
 
   const handleModifyBalance = (type: 'DEPOSIT' | 'WITHDRAWAL', amount: number, details: any) => {
+    const isDemo = user.accountMode === 'DEMO';
+    const currentBalance = isDemo ? (user.demoBalance ?? 10000) : user.walletBalance;
+
+    if (type === 'WITHDRAWAL' && amount > currentBalance) {
+      addToast(`Insufficient money in your portfolio! You requested to withdraw $${amount.toLocaleString()} but available balance is only $${currentBalance.toLocaleString()}.`, 'ERROR');
+      return;
+    }
+
     const multiplier = type === 'DEPOSIT' ? 1 : -1;
     let updatedUser: User;
-    if (user.accountMode === 'DEMO') {
+    if (isDemo) {
       updatedUser = {
         ...user,
         phone: details.phone || user.phone || "",
@@ -1134,13 +1178,35 @@ export default function App() {
       id: `tx-fin-${Date.now()}`,
       type,
       amount,
-      asset: `${user.accountMode === 'DEMO' ? '[DEMO] ' : ''}${details.asset}`,
+      asset: `${isDemo ? '[DEMO] ' : ''}${details.asset}`,
       address: details.address,
       date: new Date().toISOString(),
       status: 'COMPLETED'
     };
 
     persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+
+    // If on a Real account configuration, dispatch to backend database to persist transaction log
+    if (!isDemo && user.email) {
+      fetch(getApiUrl("/api/user/save-transaction"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: user.email,
+          type,
+          amount,
+          asset: details.asset,
+          address: details.address,
+          status: 'COMPLETED'
+        })
+      }).catch((err) => console.error("Error backing up transaction to database:", err));
+    }
+
+    if (type === 'DEPOSIT') {
+      addToast(`Deposit of $${amount.toLocaleString()} via ${details.asset} successfully credited to wallet balance!`, 'SUCCESS');
+    } else {
+      addToast(`Withdrawal of $${amount.toLocaleString()} to ${details.asset} completed successfully and sent straight to phone/ledger!`, 'SUCCESS');
+    }
   };
 
   // Filtered lists matching searches
@@ -1434,6 +1500,7 @@ export default function App() {
                     user={activeUserContext} 
                     onTradeExecute={handleTradeExecute}
                     onClosePosition={handleClosePosition}
+                    addToast={addToast}
                   />
                 </div>
               </div>
@@ -1506,7 +1573,7 @@ export default function App() {
                           />
                           <button
                             onClick={() => {
-                              alert("Validation Success: Promo Code verified! $500 USD lock-in bonus has been queued for kyc cleared users.");
+                              addToast("Validation Success: Promo Code verified! $500 USD lock-in bonus has been queued for kyc cleared users.", "SUCCESS");
                             }}
                             className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase rounded-lg px-4 text-[10px] transition-all cursor-pointer"
                           >
@@ -1542,6 +1609,7 @@ export default function App() {
                 onAllocateCopy={handleAllocateCopy}
                 onReleaseCopy={handleReleaseCopy}
                 copiedTradersState={copiedTraderAllocations}
+                addToast={addToast}
               />
             )}
 
@@ -1553,6 +1621,7 @@ export default function App() {
                 onSubscribeStaking={handleSubscribeStaking}
                 activeStakes={activeStakingSubscriptions}
                 onRedeemStaking={handleRedeemStaking}
+                addToast={addToast}
               />
             )}
 
@@ -1581,6 +1650,7 @@ export default function App() {
                 tickets={supportTickets}
                 onAddTicket={handleAddTicket}
                 onAddMessageToTicket={handleAddMessageToTicket}
+                addToast={addToast}
               />
             )}
                   </>
@@ -1938,6 +2008,51 @@ export default function App() {
           addToast={addToast}
         />
       )}
+
+      {/* FLOATING POPUP TOAST SYSTEM - DESIGNED AT BOTTOM RIGHT */}
+      <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2.5 max-w-sm w-[90%] md:w-80 pointer-events-none">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-start gap-3 bg-gray-950/95 backdrop-blur-md border rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
+              t.type === 'SUCCESS' 
+                ? 'border-emerald-500/30 shadow-emerald-950/10' 
+                : t.type === 'ERROR' 
+                ? 'border-rose-500/30 shadow-rose-950/10' 
+                : 'border-blue-500/30 shadow-blue-950/10'
+            }`}
+          >
+            {/* Direct color sidebar border */}
+            <div className={`absolute top-0 bottom-0 left-0 w-1 ${
+              t.type === 'SUCCESS' ? 'bg-emerald-500' : t.type === 'ERROR' ? 'bg-rose-500' : 'bg-blue-500'
+            }`} />
+
+            <div className="flex-1 min-w-0 pl-1.5 text-left font-sans">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className={`text-[9px] uppercase font-bold tracking-wider font-mono ${
+                  t.type === 'SUCCESS' 
+                    ? 'text-emerald-400' 
+                    : t.type === 'ERROR' 
+                    ? 'text-rose-400' 
+                    : 'text-blue-400'
+                }`}>
+                  {t.type === 'SUCCESS' ? '✓ SYSTEM CONFIRMED' : t.type === 'ERROR' ? '⚠ ACTION REJECTED' : 'ℹ TRANSACTION INFO'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
+                  className="text-gray-500 hover:text-gray-300 transition-colors pointer-events-auto"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <p className="text-gray-200 text-xs font-semibold leading-relaxed">
+                {t.message}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
 
     </div>
   );

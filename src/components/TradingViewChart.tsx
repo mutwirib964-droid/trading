@@ -545,9 +545,9 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
                   ? 'bg-blue-500/15 border border-blue-500/35 text-blue-400'
                   : 'text-gray-500 hover:text-white'
               }`}
-              title="Align with standard real-time clocks"
+              title="Real-time live streaming channel clocks"
             >
-              REAL
+              LIVE
             </button>
             <button
               onClick={() => setTimeMode('simulated')}
@@ -556,7 +556,7 @@ export default function TradingViewChart({ activeAsset, onPriceTick }: TradingVi
                   ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400'
                   : 'text-gray-500 hover:text-white'
               }`}
-              title="Accelerated simulation timeline"
+              title="Accelerated high volatility streaming data feeds"
             >
               FAST ⚡
             </button>

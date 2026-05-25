@@ -182,6 +182,8 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     return INITIAL_BOTS;
   });
 
+  const activeSectionRef = useRef<HTMLDivElement>(null);
+
   // Creation form states
   const [isCreatorOpen, setIsCreatorOpen] = useState(false);
   const [newBotName, setNewBotName] = useState('');
@@ -447,14 +449,8 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     let finalWillWin = false;
     const isDemoMode = user.accountMode === 'DEMO';
 
-    if (isDemoMode) {
-      // 94% win probability for demo accounts
-      finalWillWin = Math.random() * 100 < 94;
-    } else {
-      const isMarketer = user.role === 'marketer' || user.role === 'admin';
-      const realProbability = isMarketer ? originalWinRate : (originalWinRate * 0.28);
-      finalWillWin = Math.random() * 100 < realProbability;
-    }
+    // All execution channels utilize the highly precise quantum bot win rates
+    finalWillWin = Math.random() * 100 < originalWinRate;
 
     let targetPnl = 0;
     if (finalWillWin) {
@@ -497,6 +493,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
     setSelectedBotToRun(null);
     addToast(`${selectedBotToRun.name} has been deployed. Live feed active.`, "SUCCESS");
+
+    // Automatically navigate the user style-first to the active running configurations panel at the top
+    setTimeout(() => {
+      activeSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
   };
 
   const handleKillBot = (botId: string) => {
@@ -534,16 +535,10 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
               Quantum Algorithmic Trading Bots
             </h1>
             <p className="text-xs text-gray-400 max-w-2xl leading-relaxed">
-              Activate server-side mathematical agents. Adjust targeted leverage, risk margins, and exits. 
-              {user.accountMode === 'DEMO' ? (
-                <span className="text-amber-400 font-semibold block mt-1">
-                  {"💡 Currently in DEMO Sandbox mode: All execution channels are loaded with >90% probability models!"}
-                </span>
-              ) : (
-                <span className="text-emerald-400 block mt-1">
-                  ⚡ Real account trading active: Win rates utilize strict role metrics. (Marketers: institutional execution levels. Normal users: base retail execution pools).
-                </span>
-              )}
+              Activate high-performance quantitative agents. Adjust targeted leverage, risk margins, and target exits with microsecond execution parameters.
+              <span className="text-emerald-400 block mt-1">
+                ⚡ Algorithmic routing active: Precision execution models deployed on standard and premium order flows.
+              </span>
             </p>
           </div>
 
@@ -745,7 +740,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 <div className="flex justify-between">
                   <span className="text-gray-500">Account Mode:</span>
                   <span className={`font-bold ${user.accountMode === 'DEMO' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                    {user.accountMode === 'DEMO' ? 'PRACTICE / DEMO' : 'LIVE / LIQUIDITY'}
+                    {user.accountMode === 'DEMO' ? 'SECURED SANDBOX' : 'LIVE / LIQUIDITY'}
                   </span>
                 </div>
               </div>
@@ -832,6 +827,9 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
           </div>
         </div>
       )}
+
+      {/* Scroll anchor to view running bot configuration smoothly */}
+      <div ref={activeSectionRef} className="scroll-mt-24 pointer-events-none" />
 
       {/* Grid of ACTIVE instances if there are any */}
       {activeInstances.length > 0 && (
@@ -1016,7 +1014,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                     <div className="flex justify-between pt-1 border-t border-gray-900">
                       <span>Base Design Win Rate:</span>
                       <span className="text-white font-mono font-bold">
-                        {user.accountMode === 'DEMO' ? '90.0%+' : `${bot.winRate}%`}
+                        {`${bot.winRate}%`}
                       </span>
                     </div>
                   </div>

@@ -8,9 +8,10 @@ interface SupportPortalProps {
   tickets: SupportTicket[];
   onAddTicket: (subject: string, firstMsg: string) => void;
   onAddMessageToTicket: (ticketId: string, message: string) => void;
+  addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO') => void;
 }
 
-export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket, onAddMessageToTicket }: SupportPortalProps) {
+export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket, onAddMessageToTicket, addToast }: SupportPortalProps) {
   const [docType, setDocType] = useState('PASSPORT');
   const [kycSuccess, setKycSuccess] = useState(false);
   const [activeTicket, setActiveTicket] = useState<SupportTicket | null>(null);
@@ -26,7 +27,7 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
   const handleKycSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFileName) {
-      alert("Please select or drop an identification document (PDF or Image).");
+      addToast("Please select or drop an identification document (PDF or Image).", "ERROR");
       return;
     }
     onUpdateKyc('pending', docType);
@@ -40,7 +41,7 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
     onAddTicket(subject, description);
     setSubject('');
     setDescription('');
-    alert("Support Ticket Registered! An institutional analyst is evaluating your inquiry.");
+    addToast("Support Ticket Registered! An institutional analyst is evaluating your inquiry.", "SUCCESS");
   };
 
   const handleSendReply = (e: React.FormEvent) => {

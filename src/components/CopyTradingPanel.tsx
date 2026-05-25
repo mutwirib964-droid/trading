@@ -8,9 +8,10 @@ interface CopyTradingPanelProps {
   onAllocateCopy: (traderId: string, amount: number) => void;
   onReleaseCopy: (traderId: string) => void;
   copiedTradersState: Record<string, number>; // mappings of traderId -> allocatedUsd
+  addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO') => void;
 }
 
-export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, onReleaseCopy, copiedTradersState }: CopyTradingPanelProps) {
+export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, onReleaseCopy, copiedTradersState, addToast }: CopyTradingPanelProps) {
   const [selectedTrader, setSelectedTrader] = useState<CopyTrader | null>(null);
   const [allocationAmt, setAllocationAmt] = useState('1000');
   const [allocationSuccess, setAllocationSuccess] = useState<string | null>(null);
@@ -27,11 +28,11 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
     const amount = parseFloat(allocationAmt) || 0;
     if (amount <= 0) return;
     if (amount < 20) {
-      alert("Minimum allocation amount is $20.");
+      addToast("Minimum allocation amount is $20.", "ERROR");
       return;
     }
     if (amount > user.walletBalance) {
-      alert("Insufficient liquidity in active trading balance.");
+      addToast("Insufficient liquidity in active trading balance.", "ERROR");
       return;
     }
 
@@ -102,8 +103,8 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
                     />
                     <div>
                       <h4 className="text-white text-xs font-bold font-sans">{trader.name}</h4>
-                      <p className={`text-[8.5px] font-mono tracking-wide uppercase font-black ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded inline-block'}`}>
-                        WIN RATE: {user.role === 'marketer' ? trader.winRate.toFixed(1) : (trader.winRate * 0.28).toFixed(1)}%
+                      <p className="text-[8.5px] font-mono tracking-wide uppercase font-black text-emerald-400">
+                        WIN RATE: {trader.winRate.toFixed(1)}%
                       </p>
                     </div>
                   </div>
@@ -243,14 +244,14 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
                 <div className="bg-[#121826]/40 p-3 rounded-lg border border-gray-800/60 font-sans text-[11px] leading-relaxed text-gray-400 space-y-1">
                   <div className="flex justify-between font-mono text-[10px]">
                     <span>Expected ROI Performance:</span>
-                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450'}`}>
-                      {user.role === 'marketer' ? `~${selectedTrader.roi}% / Yr` : `~-${(selectedTrader.roi * 0.4).toFixed(1)}% / Yr Decaying`}
+                    <span className="font-bold text-emerald-400">
+                      ~{selectedTrader.roi}% / Yr
                     </span>
                   </div>
                   <div className="flex justify-between font-mono text-[10px]">
                     <span>Expected Win Rate:</span>
-                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded'}`}>
-                      {user.role === 'marketer' ? `${selectedTrader.winRate}%` : `${(selectedTrader.winRate * 0.28).toFixed(1)}%`}
+                    <span className="font-bold text-emerald-400 bg-emerald-500/10 px-1 rounded">
+                      {selectedTrader.winRate}%
                     </span>
                   </div>
                   <div className="flex justify-between font-mono text-[10px]">

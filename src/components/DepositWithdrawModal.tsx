@@ -95,6 +95,22 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
     if (pollSecondsLeft <= 0) {
       setStkStatus('TIMEOUT');
       addToast("M-Pesa PIN prompt timed out. Please initiate a new push if needed.", "ERROR");
+      
+      // Persist timed out transaction to database as FAILED standard transaction
+      if (user.email) {
+        fetch(getApiUrl("/api/user/save-transaction"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: user.email,
+            type: "DEPOSIT",
+            amount: stkUsdValue,
+            asset: "M-Pesa Mobile Push (Timed Out)",
+            address: `IPN Ref: ${stkReference} (${stkPhoneValue})`,
+            status: "FAILED"
+          })
+        }).catch((err) => console.error("Error logging timeout to database:", err));
+      }
       return;
     }
 
@@ -105,7 +121,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
     return () => {
       clearTimeout(timer);
     };
-  }, [stkReference, stkStatus, pollSecondsLeft]);
+  }, [stkReference, stkStatus, pollSecondsLeft, stkUsdValue, stkPhoneValue, user]);
 
   const handleMpesaDeposit = async (e: React.FormEvent) => {
     e.preventDefault();

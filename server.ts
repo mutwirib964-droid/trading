@@ -36,8 +36,20 @@ if (process.env.GEMINI_API_KEY) {
 // Lazy Supabase client initialization
 const getSupabase = () => {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || 
+              process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || 
+              process.env.VITE_SUPABASE_ANON_KEY || 
+              process.env.SUPABASE_ANON_KEY;
+              
+  if (!url || !key) {
+    console.warn("[getSupabase] Missing Supabase URL or Key");
+    return null;
+  }
+  
+  // Log configuration resolution once
+  staticLogSupabaseConfig(url, key);
+  
   try {
     return createClient(url, key, {
       auth: { persistSession: false }
@@ -47,6 +59,24 @@ const getSupabase = () => {
     return null;
   }
 };
+
+let hasLoggedConfig = false;
+function staticLogSupabaseConfig(url: string, key: string) {
+  if (hasLoggedConfig) return;
+  hasLoggedConfig = true;
+  
+  let keySource = "other/unknown";
+  if (key === process.env.SUPABASE_SERVICE_ROLE_KEY) keySource = "SUPABASE_SERVICE_ROLE_KEY (env)";
+  else if (key === process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) keySource = "VITE_SUPABASE_SERVICE_ROLE_KEY (env)";
+  else if (key === process.env.VITE_SUPABASE_ANON_KEY) keySource = "VITE_SUPABASE_ANON_KEY (env)";
+  else if (key === process.env.SUPABASE_ANON_KEY) keySource = "SUPABASE_ANON_KEY (env)";
+  
+  console.log(`[Supabase Config Audit]`);
+  console.log(` - URL: ${url}`);
+  console.log(` - Key Source: ${keySource}`);
+  console.log(` - Key signature: ...${key.slice(-15)}`);
+  console.log(` - Is Service Role format: ${key.includes("service_role") ? "YES" : "NO"}`);
+}
 
 // In-Memory fallback store for accounts & transactions if Supabase is offline
 interface UserMemory {
@@ -179,6 +209,9 @@ app.post("/api/user/sync", async (req, res) => {
         const { data, error: selectErr } = await db.from("profiles").select("*").eq("email", emailLower).maybeSingle();
         if (selectErr) {
           console.warn("[Supabase API] Failed to select from profiles table, falling back to memory store:", selectErr.message);
+          if (selectErr.message.includes("permission denied") || selectErr.message.includes("does not exist")) {
+            console.error("👉 ACTION REQUIRED: To fix database permissions, please log into your Supabase Dashboard, open the SQL Editor, copy ALL lines of 'supabase_setup.sql' from the project directory, and click RUN to set up tables and grant database privileges.");
+          }
           fallbackToMemory = true;
         } else {
           profile = data;
@@ -241,13 +274,51 @@ app.post("/api/user/sync", async (req, res) => {
       fallbackToMemory = true;
     }
 
+    // Query user transactions to return
+    let transactions: any[] = [];
+    const dbClient = db || getSupabase();
+    if (dbClient) {
+      try {
+        const { data: dbTxs } = await dbClient.from("transactions")
+          .select("*")
+          .or(`email.eq.${emailLower},user_email.eq.${emailLower}`)
+          .order("created_at", { ascending: false });
+        if (dbTxs) {
+          transactions = dbTxs.map((t: any) => ({
+            id: t.id,
+            type: t.type,
+            amount: Number(t.amount || 0),
+            asset: t.asset,
+            address: t.address || "",
+            date: t.created_at || new Date().toISOString(),
+            status: t.status || "COMPLETED"
+          }));
+        }
+      } catch (err) {
+        console.warn("Could not query transactions from Supabase on sync:", err);
+      }
+    } else {
+      transactions = memoryTransactions
+        .filter(t => t.email.toLowerCase() === emailLower)
+        .map((t: any) => ({
+          id: t.id,
+          type: t.type,
+          amount: Number(t.amount || 0),
+          asset: t.asset,
+          address: t.address || "",
+          date: t.date || new Date().toISOString(),
+          status: t.status || "COMPLETED"
+        }));
+    }
+
     if (profile && !fallbackToMemory) {
       return res.json({
         id: profile.id || userUid,
         email: profile.email,
         role: profile.role || (isAdmin ? "admin" : "user"),
         walletBalance: profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
-        phone: profile.phone || ""
+        phone: profile.phone || "",
+        transactions: transactions
       });
     }
 
@@ -276,7 +347,8 @@ app.post("/api/user/sync", async (req, res) => {
       email: memUser.email,
       role: memUser.role,
       walletBalance: memUser.wallet_balance,
-      phone: memUser.phone || ""
+      phone: memUser.phone || "",
+      transactions: transactions
     });
   } catch (err: any) {
     console.error("[Fatal /api/user/sync Exception] Falling back anyway to robust default login:", err);
@@ -289,7 +361,8 @@ app.post("/api/user/sync", async (req, res) => {
       email: emailLower,
       role: isAdmin ? "admin" : "user",
       walletBalance: isAdmin ? 1000 : 0,
-      phone: ""
+      phone: "",
+      transactions: []
     });
   }
 });
@@ -315,7 +388,7 @@ function formatMpesaPhone(p: string): string {
 
 const getPayheroConfig = () => {
   return {
-    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "Basic RDhvMFZXQUtkQWlNdXpIQzFwUXA6dnVtWjJQNHlKUmlzZkYzZmpDN2lvbU1PWkFkajBGb1dQNGlkN0lwMQ==",
+    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "",
     channelId: process.env.PAYHERO_CHANNEL_ID || "4575"
   };
 };
@@ -437,27 +510,147 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 
     if (isSuccess) {
       // Create pending transactions locally log
-      memoryTransactions.push({
+      const newTx = {
         id: `tx-fin-${Date.now()}`,
-        email,
+        email: email.toLowerCase(),
         type: "DEPOSIT",
         amount: Number(amount_usd),
         asset: "M-Pesa Mobile Push (Pending)",
-        address: cleanedPhone,
+        address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
         date: new Date().toISOString(),
         status: "PENDING",
         reference: externalRef
-      } as any);
+      };
+      memoryTransactions.push(newTx as any);
+
+      // Persist to Supabase transactions table
+      const db = getSupabase();
+      if (db) {
+        try {
+          await db.from("transactions").insert({
+            email: email.toLowerCase(),
+            user_email: email.toLowerCase(),
+            type: "DEPOSIT",
+            amount: Number(amount_usd),
+            asset: "M-Pesa Mobile Push (Pending)",
+            address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
+            status: "PENDING",
+            created_at: new Date().toISOString()
+          });
+        } catch (dbErr) {
+          console.error("Failed to insert pending STK transaction to database:", dbErr);
+        }
+      }
 
       return res.json({ success: true, reference: externalRef, payload: parsedBody });
     } else {
       const errMsg = parsedBody.message || parsedBody.error || "M-Pesa STK push request rejected by Payhero API provider";
+      
+      // Save failed attempt to memoryTransactions
+      const newFailedTx = {
+        id: `tx-fin-${Date.now()}`,
+        email: email.toLowerCase(),
+        type: "DEPOSIT",
+        amount: Number(amount_usd),
+        asset: "M-Pesa Mobile Push (Failed Request)",
+        address: `M-Pesa Failure (${cleanedPhone})`,
+        date: new Date().toISOString(),
+        status: "FAILED",
+        reference: externalRef
+      };
+      memoryTransactions.push(newFailedTx as any);
+
+      // Persist to Supabase
+      const db = getSupabase();
+      if (db) {
+        try {
+          await db.from("transactions").insert({
+            email: email.toLowerCase(),
+            user_email: email.toLowerCase(),
+            type: "DEPOSIT",
+            amount: Number(amount_usd),
+            asset: `M-Pesa Gateway Failure: ${errMsg.slice(0, 50)}`,
+            address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
+            status: "FAILED",
+            created_at: new Date().toISOString()
+          });
+        } catch (dbErr) {
+          console.error("Failed to insert failed STK transaction to database:", dbErr);
+        }
+      }
+
       return res.status(400).json({ error: errMsg, details: parsedBody });
     }
 
   } catch (error: any) {
     console.error("Payhero STK Error:", error);
     res.status(500).json({ error: "Exception triggering STK push payment: " + error.message });
+  }
+});
+
+// Endpoint to manually save standard manual transactions (e.g. Card, Crypto, Wire) to the database
+app.post("/api/user/save-transaction", async (req, res) => {
+  try {
+    const { email, type, amount, asset, address, status } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required to log a transaction." });
+    }
+    const emailLower = email.toLowerCase().trim();
+    const cleanAmount = Number(amount) || 0;
+    const cleanType = String(type || "DEPOSIT").toUpperCase();
+    const cleanStatus = String(status || "COMPLETED").toUpperCase();
+
+    // 1. Save to in-memory fallback
+    const newTx = {
+      id: `tx-fin-${Date.now()}`,
+      email: emailLower,
+      type: cleanType,
+      amount: cleanAmount,
+      asset: String(asset || "Unknown Asset"),
+      address: String(address || "Liquid Asset block"),
+      date: new Date().toISOString(),
+      status: cleanStatus
+    };
+    memoryTransactions.unshift(newTx);
+
+    // 2. Save directly to Supabase table
+    const db = getSupabase();
+    if (db) {
+      try {
+        const { error: txErr } = await db.from("transactions").insert({
+          email: emailLower,
+          user_email: emailLower,
+          type: cleanType,
+          amount: cleanAmount,
+          asset: String(asset || "Unknown Asset"),
+          address: String(address || "Liquid Asset block"),
+          status: cleanStatus,
+          created_at: new Date().toISOString()
+        });
+        if (txErr) {
+          console.warn("[save-transaction] Standard select/insert failed on Supabase. Retrying using bypass RPC if available:", txErr.message);
+          const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+            secure_token: 'payhero_system_clear_token_vfx',
+            target_email: emailLower,
+            tx_type: cleanType,
+            tx_amount: cleanAmount,
+            tx_asset: String(asset || "Unknown Asset"),
+            tx_address: String(address || "Liquid Asset block"),
+            tx_status: cleanStatus
+          });
+          if (txRpcErr) {
+            console.warn("[save-transaction] RPC insert failed too:", txRpcErr.message);
+          }
+        }
+      } catch (dbErr: any) {
+        console.error("Database error saving manual transaction:", dbErr.message || dbErr);
+      }
+    }
+
+    return res.json({ success: true, transaction: newTx });
+  } catch (err: any) {
+    console.error("Fatal exception in /api/user/save-transaction:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -8,9 +8,10 @@ interface InvestmentsPanelProps {
   onSubscribeStaking: (planId: string, amount: number) => void;
   activeStakes: { id: string; planName: string; amount: number; rateLabel: string; endDays: number; accrued: number }[];
   onRedeemStaking: (id: string, amount: number, accrued: number) => void;
+  addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO') => void;
 }
 
-export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStaking, activeStakes, onRedeemStaking }: InvestmentsPanelProps) {
+export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStaking, activeStakes, onRedeemStaking, addToast }: InvestmentsPanelProps) {
   // Calculator values state
   const [calcAmt, setCalcAmt] = useState('5000');
   const [selectedPlanId, setSelectedPlanId] = useState(stakingPlans[1].id); // default to Gold 90d
@@ -38,15 +39,15 @@ export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStakin
 
     const amount = parseFloat(subAmt) || 0;
     if (amount < subscribingPlan.minDeposit) {
-      alert(`Minimum deposit requirement for this premium contract is $${subscribingPlan.minDeposit}.`);
+      addToast(`Minimum deposit requirement for this premium contract is $${subscribingPlan.minDeposit}.`, "ERROR");
       return;
     }
     if (subscribingPlan.maxDeposit && amount > subscribingPlan.maxDeposit) {
-      alert(`Maximum deposit restriction for this contract is $${subscribingPlan.maxDeposit}.`);
+      addToast(`Maximum deposit restriction for this contract is $${subscribingPlan.maxDeposit}.`, "ERROR");
       return;
     }
     if (amount > user.walletBalance) {
-      alert("Insufficient available liquid funds to complete this subscription.");
+      addToast("Insufficient available liquid funds to complete this subscription.", "ERROR");
       return;
     }
 
@@ -126,8 +127,8 @@ export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStakin
                   </div>
                   <div className="flex justify-between font-mono text-[8.5px]">
                     <span>YIELD SUCCESS RATE:</span>
-                    <span className={`font-bold ${user.role === 'marketer' ? 'text-emerald-400' : 'text-rose-450 bg-rose-500/10 px-1 rounded'}`}>
-                      {user.role === 'marketer' ? '88.3%' : '24.7% (High Risk)'}
+                    <span className="font-bold text-emerald-400 bg-emerald-500/10 px-1 rounded">
+                      92.4%
                     </span>
                   </div>
                   
