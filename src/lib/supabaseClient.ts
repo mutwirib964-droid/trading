@@ -31,7 +31,7 @@ export async function dbSyncUser(user: any) {
         phone: user.phone || null,
         wallet_balance: user.walletBalance,
         invested_capital: user.investedCapital,
-        profits: user.profits,
+        profits_real: user.profits,
         copy_trading_allocated: user.copyTradingAllocated,
         is_kyc_verified: user.isKycVerified,
         kyc_doc_type: user.kycDocType || null,

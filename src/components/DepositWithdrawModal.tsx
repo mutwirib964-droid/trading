@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Transaction } from '../types';
+import { User, Transaction, getTransactionDisplayLabel } from '../types';
 import { CreditCard, Landmark, Check, Copy, ArrowUpRight, ArrowDownRight, Link, RefreshCw, X, Phone } from 'lucide-react';
 import { getApiUrl } from '../lib/api';
 
@@ -819,7 +819,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                               {tx.type === 'DEPOSIT' ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
                             </div>
                             <div>
-                              <p className="text-white font-bold uppercase tracking-wider">{tx.type} CONTRACT</p>
+                              <p className="text-white font-bold uppercase tracking-wider">{getTransactionDisplayLabel(tx)}</p>
                               <p className="text-gray-500 text-[9px]">{new Date(tx.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</p>
                               {tx.address && <p className="text-gray-600 text-[8px] truncate max-w-[150px]">{tx.address}</p>}
                             </div>

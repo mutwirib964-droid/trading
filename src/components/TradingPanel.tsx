@@ -355,44 +355,44 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
             No active leveraged margin options logged. Scale trading above to test position state matching.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-[10.5px] font-mono">
+          <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+            <table className="w-full min-w-[850px] text-left text-[10.5px] font-mono">
               <thead>
-                <tr className="border-b border-gray-800 text-gray-500 uppercase pb-1.5 text-[9px]">
-                  <th className="py-2">Symbol</th>
-                  <th>Mode / Multiplier</th>
-                  <th>Entry Price</th>
-                  <th>Current price</th>
-                  <th>Margin Collateral</th>
-                  <th>Volume Rate</th>
-                  <th>Profit / Loss</th>
-                  <th className="text-right">Actions</th>
+                <tr className="border-b border-gray-800 text-gray-500 uppercase pb-1.5 text-[9px] whitespace-nowrap">
+                  <th className="py-2 pr-3">Symbol</th>
+                  <th className="px-3">Mode / Multiplier</th>
+                  <th className="px-3">Entry Price</th>
+                  <th className="px-3">Current price</th>
+                  <th className="px-3">Margin Collateral</th>
+                  <th className="px-3">Volume Rate</th>
+                  <th className="px-3">Profit / Loss</th>
+                  <th className="py-2 pl-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {user.activePositions.map((pos) => {
                   const isGain = pos.pnl >= 0;
                   return (
-                    <tr key={pos.id} className="border-b border-gray-850 hover:bg-gray-900/10">
-                      <td className="py-2 font-sans font-bold text-white uppercase">{pos.assetSymbol}</td>
-                      <td>
+                    <tr key={pos.id} className="border-b border-gray-850 hover:bg-gray-900/10 whitespace-nowrap">
+                      <td className="py-2.5 pr-3 font-sans font-bold text-white uppercase">{pos.assetSymbol}</td>
+                      <td className="px-3">
                         <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
                           pos.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
                         }`}>
                           {pos.type} {pos.leverage}x
                         </span>
                       </td>
-                      <td className="text-gray-400">${pos.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="text-white font-semibold">${pos.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="text-gray-400">${pos.margin.toLocaleString()}</td>
-                      <td className="text-gray-500">{pos.amount.toFixed(pos.assetSymbol.includes('forex') ? 3 : 5)}</td>
-                      <td className={`font-bold ${isGain ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {isGain ? '+' : ''}${pos.pnl.toFixed(2)} ({isGain ? '+' : ''}{((pos.pnl / pos.margin) * 100).toFixed(1)}%)
+                      <td className="px-3 text-gray-400">${pos.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 text-white font-semibold">${pos.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 text-gray-400">${pos.margin.toLocaleString()}</td>
+                      <td className="px-3 text-gray-500">{pos.amount.toFixed(pos.assetSymbol.includes('forex') ? 3 : 5)}</td>
+                      <td className={`px-3 font-bold ${isGain ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {isGain ? '+' : '-'}${Math.abs(pos.pnl).toFixed(2)} ({isGain ? '+' : ''}{((pos.pnl / pos.margin) * 100).toFixed(1)}%)
                       </td>
-                      <td className="text-right">
+                      <td className="py-2.5 pl-3 text-right">
                         <button
                           onClick={() => onClosePosition(pos.id, pos.pnl)}
-                          className="px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white text-[8.5px] font-bold uppercase tracking-wide rounded border border-rose-500/20 transition-all cursor-pointer"
+                          className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white text-[8.5px] font-bold uppercase tracking-wide rounded border border-rose-500/20 transition-all cursor-pointer"
                         >
                           CLOSE CONTRACT
                         </button>

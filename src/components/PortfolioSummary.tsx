@@ -132,7 +132,7 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
         <div className="space-y-3">
           <div className="space-y-0.5">
             <h3 className={`text-xl md:text-2xl font-bold font-mono tracking-tight ${netEarnings >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {netEarnings >= 0 ? '+' : ''}${netEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {netEarnings >= 0 ? '+' : '-'}${Math.abs(netEarnings).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </h3>
             <p className="text-[9px] font-mono text-gray-500 uppercase">{"REALIZED NET PROFIT"}</p>
           </div>

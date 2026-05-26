@@ -53,7 +53,7 @@ interface BotsPanelProps {
   user: User;
   assets: Asset[];
   addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO' | 'WARNING') => void;
-  onModifyUserBalance: (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string) => void;
+  onModifyUserBalance: (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string, updatedActiveBots?: any[]) => void;
 }
 
 const INITIAL_BOTS: BotConfig[] = [
@@ -228,13 +228,16 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
   useEffect(() => {
     if (user.activeBots) {
-      const currentIds = activeInstances.map(i => i.botId).join(',');
-      const incomingIds = user.activeBots.map(i => i.botId).join(',');
-      if (currentIds !== incomingIds) {
-        setActiveInstances(user.activeBots);
-      }
+      setActiveInstances((current) => {
+        const currentIds = current.map(i => i.botId).join(',');
+        const incomingIds = user.activeBots.map(i => i.botId).join(',');
+        if (currentIds !== incomingIds) {
+          return user.activeBots;
+        }
+        return current;
+      });
     }
-  }, [user.activeBots, activeInstances]);
+  }, [user.activeBots]);
 
   const activeSectionRef = useRef<HTMLDivElement>(null);
 
@@ -247,6 +250,16 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
   const [newBotLeverage, setNewBotLeverage] = useState(50);
   const [newBotWinRate, setNewBotWinRate] = useState(90);
   const [newBotDesc, setNewBotDesc] = useState('');
+
+  // Upload interactive configuration states
+  const [isUploadSettingsOpen, setIsUploadSettingsOpen] = useState(false);
+  const [uploadBotName, setUploadBotName] = useState('');
+  const [uploadBotStrategy, setUploadBotStrategy] = useState('');
+  const [uploadBotAsset, setUploadBotAsset] = useState('BTC/USD');
+  const [uploadBotRisk, setUploadBotRisk] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
+  const [uploadBotLeverage, setUploadBotLeverage] = useState(50);
+  const [uploadBotWinRate, setUploadBotWinRate] = useState(92);
+  const [uploadBotDesc, setUploadBotDesc] = useState('');
 
   // Start instance form modal states
   const [selectedBotToRun, setSelectedBotToRun] = useState<BotConfig | null>(null);
@@ -286,7 +299,8 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
           if (newTimeLeft <= 0) {
             // Settle Bot Trade!
-            handleFinalizeBotTrade(inst);
+            const remaining = prev.filter(i => i.botId !== inst.botId);
+            handleFinalizeBotTrade(inst, remaining);
             return null;
           }
 
@@ -325,7 +339,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     return () => clearInterval(interval);
   }, [activeInstances, user, bots]);
 
-  const handleFinalizeBotTrade = (inst: ActiveBotInstance) => {
+  const handleFinalizeBotTrade = (inst: ActiveBotInstance, remainingActiveBots?: ActiveBotInstance[]) => {
     const isDemo = inst.isDemo;
     const pnl = inst.targetPnl;
 
@@ -336,7 +350,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     }
 
     // Call callback to commit changes to parent and save immediately
-    onModifyUserBalance(inst.margin, pnl, isDemo, inst.botName, inst.assetSymbol);
+    onModifyUserBalance(inst.margin, pnl, isDemo, inst.botName, inst.assetSymbol, remainingActiveBots);
   };
 
   const handleCreateBot = (e: React.FormEvent) => {
@@ -414,47 +428,82 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (!parsed.botName || !parsed.strategy || !parsed.targetAsset) {
-          addToast("Invalid JSON structure. Ensure 'botName', 'strategy', and 'targetAsset' properties are present.", "ERROR");
-          return;
-        }
-
-        const uploadedBot: BotConfig = {
-          id: `bot-upl-${Date.now()}`,
-          name: parsed.botName,
-          strategy: parsed.strategy,
-          targetAsset: parsed.targetAsset,
-          riskTolerance: (parsed.riskTolerance && ['LOW', 'MEDIUM', 'HIGH'].includes(parsed.riskTolerance.toUpperCase())) 
-            ? parsed.riskTolerance.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH' 
-            : 'MEDIUM',
-          defaultLeverage: Number(parsed.defaultLeverage) || 50,
-          winRate: Math.min(Math.max(Number(parsed.winRate) || 90, 60), 98),
-          creator: 'Uploaded',
-          description: parsed.description || `Uploaded trading configuration targeting ${parsed.targetAsset} utilizing ${parsed.strategy}.`
-        };
-
-        const updatedUserBots = bots.filter(b => b.creator !== 'System');
-        const systemOnly = bots.filter(b => b.creator === 'System');
-
-        const updatedLedger = [...updatedUserBots, uploadedBot];
-        localStorage.setItem('vfx_custom_bots_ledger', JSON.stringify(updatedLedger));
-        if (user && user.email) {
-          fetch(getApiUrl('/api/user/update-state'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: user.email, customBots: updatedLedger })
-          }).catch(err => console.warn(err));
-        }
         
-        setBots([...systemOnly, ...updatedLedger]);
-        addToast(`Uploaded Bot '${uploadedBot.name}' initialized and deployed successfully.`, "SUCCESS");
+        // Extract default settings with resilient fallbacks
+        const extractedName = parsed.botName || parsed.name || file.name.replace(/\.[^/.]+$/, "");
+        const extractedStrategy = parsed.strategy || "Quantum Liquidity Scalper";
+        
+        // Match asset to one of currently active system assets if possible
+        let extractedAsset = parsed.targetAsset || parsed.asset || "BTC/USD";
+        const hasMatchingAsset = assets.some(a => a.symbol.toUpperCase() === extractedAsset.toUpperCase());
+        if (!hasMatchingAsset && assets.length > 0) {
+          // Default to the first asset in the system if not found
+          extractedAsset = assets[0].symbol;
+        }
+
+        const extractedRisk = (parsed.riskTolerance && ['LOW', 'MEDIUM', 'HIGH'].includes(parsed.riskTolerance.toUpperCase())) 
+          ? parsed.riskTolerance.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH' 
+          : 'MEDIUM';
+        const extractedLev = Number(parsed.defaultLeverage || parsed.leverage) || 50;
+        const extractedWinRate = Math.min(Math.max(Number(parsed.winRate) || 91, 60), 98);
+        const extractedDesc = parsed.description || `Uploaded trading configuration targeting ${extractedAsset} utilizing ${extractedStrategy}.`;
+
+        // Update form states and trigger the customization panel
+        setUploadBotName(extractedName);
+        setUploadBotStrategy(extractedStrategy);
+        setUploadBotAsset(extractedAsset);
+        setUploadBotRisk(extractedRisk);
+        setUploadBotLeverage(extractedLev);
+        setUploadBotWinRate(extractedWinRate);
+        setUploadBotDesc(extractedDesc);
+        
+        setIsUploadSettingsOpen(true);
+        addToast("Bot blueprint loaded successfully. Customize its specifications below!", "INFO");
       } catch (err) {
-        addToast("Error parsing file. Please ensure it is valid JSON formatted text.", "ERROR");
+        addToast("Error parsing file. Please ensure it is a valid JSON formatted layout.", "ERROR");
       }
     };
     reader.readAsText(file);
     // Reset file input
     e.target.value = '';
+  };
+
+  const handleInstallUploadedBot = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadBotName.trim()) {
+      addToast("Bot designation name is required.", "WARNING");
+      return;
+    }
+
+    const uploadedBot: BotConfig = {
+      id: `bot-upl-${Date.now()}`,
+      name: uploadBotName,
+      strategy: uploadBotStrategy || 'Custom Neural Integration',
+      targetAsset: uploadBotAsset,
+      riskTolerance: uploadBotRisk,
+      defaultLeverage: Number(uploadBotLeverage) || 50,
+      winRate: Math.min(Math.max(Number(uploadBotWinRate) || 90, 60), 98),
+      creator: 'Uploaded',
+      description: uploadBotDesc || `Uploaded trading configuration targeting ${uploadBotAsset} utilizing ${uploadBotStrategy || 'Custom Neural Integration'}.`
+    };
+
+    const updatedUserBots = bots.filter(b => b.creator !== 'System');
+    const systemOnly = bots.filter(b => b.creator === 'System');
+
+    const updatedLedger = [...updatedUserBots, uploadedBot];
+    localStorage.setItem('vfx_custom_bots_ledger', JSON.stringify(updatedLedger));
+    
+    if (user && user.email) {
+      fetch(getApiUrl('/api/user/update-state'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, customBots: updatedLedger })
+      }).catch(err => console.warn("Silent database sync uploaded bots error:", err));
+    }
+    
+    setBots([...systemOnly, ...updatedLedger]);
+    setIsUploadSettingsOpen(false);
+    addToast(`Bot '${uploadedBot.name}' configured and saved permanently. Ready to deploy!`, "SUCCESS");
   };
 
   const handleInitStartBot = (bot: BotConfig) => {
@@ -509,9 +558,6 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
       targetPnl = Number((-valMargin * (lossPercent / 100)).toFixed(2));
     }
 
-    // Deduct initial capital allocation
-    onModifyUserBalance(valMargin, null, isDemoMode, selectedBotToRun.name, selectedBotToRun.targetAsset);
-
     const timeStr = new Date().toLocaleTimeString();
     const newInstance: ActiveBotInstance = {
       botId: selectedBotToRun.id,
@@ -537,13 +583,9 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     const newInstancesList = [...activeInstances, newInstance];
     setActiveInstances(newInstancesList);
     localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(newInstancesList));
-    if (user && user.email) {
-      fetch(getApiUrl('/api/user/update-state'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, activeBots: newInstancesList })
-      }).catch(e => console.warn(e));
-    }
+
+    // Deduct initial capital allocation & sync newInstancesList to parent & DB
+    onModifyUserBalance(valMargin, null, isDemoMode, selectedBotToRun.name, selectedBotToRun.targetAsset, newInstancesList);
 
     setSelectedBotToRun(null);
     addToast(`${selectedBotToRun.name} has been deployed. Live feed active.`, "SUCCESS");
@@ -561,18 +603,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
     // Refund 90% of the allocated margin because it was aborted by force
     const refund = Number((act.margin * 0.90).toFixed(2));
-    onModifyUserBalance(-act.margin, refund - act.margin, act.isDemo, act.botName, act.assetSymbol);
-
     const updated = activeInstances.filter(i => i.botId !== botId);
     setActiveInstances(updated);
     localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(updated));
-    if (user && user.email) {
-      fetch(getApiUrl('/api/user/update-state'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, activeBots: updated })
-      }).catch(e => console.warn(e));
-    }
+
+    onModifyUserBalance(act.margin, refund - act.margin, act.isDemo, act.botName, act.assetSymbol, updated);
 
     addToast(`Bot pipeline terminated manually. 90% collateral allocation ($${refund.toLocaleString()}) refunded to account.`, "WARNING");
   };
@@ -612,19 +647,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
               Compile New Bot
             </button>
             <button
-              onClick={handleDownloadTemplate}
-              className="px-3 py-2 bg-[#0a101d] hover:bg-[#0e182c] border border-gray-800 hover:border-gray-700 text-gray-300 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-              title="Download editable boilerplate file"
-            >
-              <DownloadCloud className="w-4 h-4 text-emerald-400" />
-              Download Template
-            </button>
-            <button
               onClick={handleUploadClick}
-              className="px-3 py-2 bg-[#0a101d] hover:bg-[#0e182c] border border-gray-800 hover:border-gray-700 text-gray-300 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-2 bg-[#0b101d] hover:bg-emerald-600 hover:text-white border border-gray-800 text-gray-300 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
               title="Upload your JSON configuration"
             >
-              <UploadCloud className="w-4 h-4 text-emerald-400" />
+              <UploadCloud className="w-4 h-4 text-emerald-400 group-hover:text-white" />
               Upload Bot
             </button>
             <input 
@@ -761,6 +788,137 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold cursor-pointer uppercase"
                 >
                   Compile and Load
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Bot Specifications Setup Dialog Modal */}
+      {isUploadSettingsOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 z-50 overflow-y-auto">
+          <div className="bg-[#0b0f19] border border-gray-800 rounded-xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-250">
+            <div className="px-5 py-4 border-b border-gray-850 flex items-center justify-between bg-gray-950">
+              <div className="flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-emerald-400" />
+                <span className="text-white text-sm font-bold uppercase tracking-wider font-sans">Configure Uploaded Bot Specs</span>
+              </div>
+              <button 
+                onClick={() => setIsUploadSettingsOpen(false)}
+                className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleInstallUploadedBot} className="p-5 space-y-4 text-xs font-sans">
+              <div className="bg-emerald-950/20 border border-emerald-900/40 p-3 rounded-lg text-emerald-400 leading-relaxed font-medium">
+                Blueprint recognized! Set your configuration preferences. These parameters define how the bot manages capital allocations and executes quantum triggers.
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-gray-400 uppercase font-bold text-[10px]">Machine Bot Designation Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Astra Alpha Core"
+                  value={uploadBotName}
+                  onChange={(e) => setUploadBotName(e.target.value)}
+                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-gray-400 uppercase font-bold text-[10px]">Trading Strategy System</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Dynamic EMA Convergence"
+                    value={uploadBotStrategy}
+                    onChange={(e) => setUploadBotStrategy(e.target.value)}
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-gray-400 uppercase font-bold text-[10px]">Trading Instrument / Currency</label>
+                  <select
+                    value={uploadBotAsset}
+                    onChange={(e) => setUploadBotAsset(e.target.value)}
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 cursor-pointer text-xs"
+                  >
+                    {assets.map(a => (
+                      <option key={a.id} value={a.symbol}>{a.symbol} - {a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-gray-400 uppercase font-bold text-[10px]">Risk Level</label>
+                  <select
+                    value={uploadBotRisk}
+                    onChange={(e) => setUploadBotRisk(e.target.value as any)}
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none cursor-pointer"
+                  >
+                    <option value="LOW">Low Risk</option>
+                    <option value="MEDIUM">Medium Risk</option>
+                    <option value="HIGH">High Risk</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-gray-400 uppercase font-bold text-[10px]">Leverage Limit (x)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="200"
+                    value={uploadBotLeverage}
+                    onChange={(e) => setUploadBotLeverage(Math.min(200, Math.max(1, parseInt(e.target.value) || 50)))}
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-gray-400 uppercase font-bold text-[10px]">Design Win Rate (%)</label>
+                  <input
+                    type="number"
+                    min="60"
+                    max="98"
+                    value={uploadBotWinRate}
+                    onChange={(e) => setUploadBotWinRate(Math.min(98, Math.max(60, parseInt(e.target.value) || 92)))}
+                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-gray-400 uppercase font-bold text-[10px]">Algorithm Description & Objective</label>
+                <textarea
+                  rows={2}
+                  placeholder="Summarize the behavior parameters of this algorithm..."
+                  value={uploadBotDesc}
+                  onChange={(e) => setUploadBotDesc(e.target.value)}
+                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none text-[11px]"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsUploadSettingsOpen(false)}
+                  className="px-4 py-2 border border-gray-800 hover:bg-gray-900 rounded-lg font-bold text-gray-400 cursor-pointer"
+                >
+                  Discard
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-650 hover:bg-emerald-600 text-white rounded-lg font-bold cursor-pointer uppercase tracking-wider"
+                >
+                  Compile and Install Bot
                 </button>
               </div>
             </form>

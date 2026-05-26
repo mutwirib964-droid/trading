@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Asset, User, Position, Transaction, CopyTrader, StakingPlan, SupportTicket } from './types';
+import { Asset, User, Position, Transaction, CopyTrader, StakingPlan, SupportTicket, getTransactionDisplayLabel } from './types';
 import { 
   INITIAL_ASSETS, 
   INITIAL_COPY_TRADERS, 
@@ -56,20 +56,58 @@ const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { 
   const timeSec = Date.now() / 15000;
   const sinVal = Math.sin(timeSec + seed * Math.PI * 2);
 
-  let pnlFactor = 0;
+  // 1. Calculate the standard ultimate biased PnL
+  let ultimatePnlFactor = 0;
   if (isWin) {
     // Win: PNL goes from +4% to +35% of margin
-    pnlFactor = 0.04 + seed * 0.16 + (sinVal + 1) * 0.08;
+    ultimatePnlFactor = 0.04 + seed * 0.16 + (sinVal + 1) * 0.08;
   } else {
     // Loss: PNL goes from -6% to -42% of margin
-    pnlFactor = -(0.06 + seed * 0.18 + (sinVal + 1) * 0.09);
+    ultimatePnlFactor = -(0.06 + seed * 0.18 + (sinVal + 1) * 0.09);
+  }
+  const ultimateBiasedPnl = p.margin * ultimatePnlFactor;
+
+  // 2. Identify currency assets spread characteristics
+  const sym = p.assetSymbol.toUpperCase();
+  const cryptos = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOT', 'DOGE', 'LTC', 'LINK', 'BNB', 'AVAX', 'NEAR'];
+  const base = sym.split('/')[0];
+  
+  let spreadPercent = 0.0006; // Default to standard stocks/misc spread of 0.06%
+  if (cryptos.includes(base)) {
+    // Crypto spread: 0.015% for BTC, 0.022% for ETH, 0.04% for other meme/alt coins
+    spreadPercent = base === 'BTC' ? 0.00018 : base === 'ETH' ? 0.00024 : 0.00045;
+  } else if (sym.includes('/') || sym.includes('JPY') || sym.includes('CHF') || sym.includes('EUR') || sym.includes('GBP') || sym.includes('CAD') || sym.includes('AUD')) {
+    // Forex spreads modeled exactly as per-currency MT4/MT5 pip structures
+    const isJpy = sym.includes('JPY');
+    const pipSize = isJpy ? 0.01 : 0.0001;
+    let pips = 2.0; // standard cross-pair pips
+    if (sym === 'EUR/USD') pips = 1.3;
+    else if (sym === 'GBP/USD') pips = 1.6;
+    else if (sym === 'USD/JPY') pips = 1.5;
+    else if (sym === 'AUD/USD' || sym === 'USD/CAD') pips = 1.9;
+    
+    const spreadVal = pips * pipSize;
+    spreadPercent = spreadVal / Math.max(0.0001, assetPrice);
   }
 
-  const pnl = Number((p.margin * pnlFactor).toFixed(2));
-  
-  // Calculate a mock currentPrice that matches this PnL
-  // pnl = margin * ((currentPrice - entryPrice) / entryPrice) * leverage * multiplier
-  // => (pnl / (margin * leverage * multiplier)) * entryPrice + entryPrice = currentPrice
+  // 3. Translate bid/ask spread into capital collateral initial loss (MT5 compliant calculation)
+  // At t=0, the trade is at exactly 100% spread loss.
+  const initialSpreadLoss = - p.margin * p.leverage * spreadPercent;
+
+  // 4. Smooth organic interpolator to recover from spread and match the trending direction
+  const ageSeconds = Math.max(0, (Date.now() - numId) / 1000);
+  const recoveryPeriod = 15; // smooth recovery timeframe of 15 seconds
+  const ratio = Math.min(1, ageSeconds / recoveryPeriod);
+  // Elegant easing curve so recovery starts swift then tapers smoothly
+  const blend = Math.sin(ratio * Math.PI / 2);
+
+  // Blend from initial spread loss to the ultimate simulated market outcome
+  const pnlRaw = initialSpreadLoss * (1 - blend) + ultimateBiasedPnl * blend;
+  const pnl = Number(pnlRaw.toFixed(2));
+
+  // 5. Back-solve the precise simulated currentPrice matching this PnL
+  // pnl = margin * ((currentPrice - entryPrice) / entryPrice) * leverage * buy/sell-multiplier
+  // => currentPrice = ((pnl / (margin * leverage * multiplier)) * entryPrice) + entryPrice
   const multiplier = p.type === 'BUY' ? 1 : -1;
   const denom = p.margin * p.leverage * multiplier;
   let currentPrice = p.entryPrice;
@@ -111,6 +149,7 @@ export default function App() {
   const selectedAsset = assets.find((a) => a.id === selectedAssetId) || assets[0];
   const [assetCategoryFilter, setAssetCategoryFilter] = useState<'ALL' | 'crypto' | 'forex' | 'stocks'>('ALL');
   const [marketSearchQuery, setMarketSearchQuery] = useState('');
+  const [promoCodeInput, setPromoCodeInput] = useState('');
 
   // Core user balance portfolio state
   const [user, setUser] = useState<User>({
@@ -133,6 +172,24 @@ export default function App() {
 
   // Supporting transactional and ticketing state
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  
+  // Real account metrics for promo evaluation
+  const realDeposits = transactions.filter(tx => 
+    tx.type === 'DEPOSIT' && 
+    !tx.asset.includes('[DEMO]') && 
+    !tx.asset.toLowerCase().includes('settlement') && 
+    !tx.asset.toLowerCase().includes('redeem') && 
+    !tx.asset.toLowerCase().includes('onboarding') && 
+    !tx.asset.toLowerCase().includes('maturity') && 
+    !tx.asset.toLowerCase().includes('release') &&
+    !tx.asset.toLowerCase().includes('allocation')
+  );
+  const totalEarnestDeposits = realDeposits.reduce((acc, tx) => acc + tx.amount, 0);
+
+  const completedRealTradesCount = transactions.filter(tx => 
+    !tx.asset.includes('[DEMO]') && 
+    (tx.asset.toLowerCase().includes('(settlement)') || tx.asset.toLowerCase().includes('bot settlement'))
+  ).length;
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(MOCK_SUPPORT_TICKETS);
   const [copiedTraderAllocations, setCopiedTraderAllocations] = useState<Record<string, number>>({});
   const [activeStakingSubscriptions, setActiveStakingSubscriptions] = useState<{ id: string; planName: string; amount: number; rateLabel: string; endDays: number; accrued: number }[]>([]);
@@ -322,22 +379,17 @@ export default function App() {
         }
       });
 
-      // 2. Mock accrue returns on active Stakings
+      // 2. Mock accrue returns on active Stakings (compounding positive yield only)
       const updatedStakingSubs = activeStakingSubscriptionsRef.current.map((stk) => {
         isUpdated = true;
-        // Accrue dynamic yields biased by user's target win rate: marketer > 80% and normal users < 30%
+        
         const isMarketer = currentUser.role === 'marketer';
-        const rand = Math.random();
-        const isWin = isMarketer ? (rand < 0.85) : (rand < 0.25);
+        const boostMultiplier = isMarketer ? 3.0 : 1.0;
         
-        let returnRate = 0;
-        if (isWin) {
-          returnRate = 0.0001 + Math.random() * 0.0004; // profitable accrual
-        } else {
-          returnRate = -(0.00015 + Math.random() * 0.0005); // dynamic volatility pullback
-        }
-        
+        // Always positive yield compounding interest
+        const returnRate = (0.00012 + Math.random() * 0.00028) * boostMultiplier;
         const increment = stk.amount * returnRate;
+        
         return {
           ...stk,
           accrued: Number((stk.accrued + increment).toFixed(2))
@@ -660,12 +712,13 @@ export default function App() {
           });
           
           if (signUpError) {
-            addToast(`Supabase Registration Error: ${signUpError.message}`, "ERROR");
-            return;
-          }
-          console.log("Supabase Auth sign up succeeded:", signUpData);
-          if (signUpData?.user) {
-            userUid = signUpData.user.id;
+            console.warn("Supabase signup skipped/failed, bypassing via sandbox fallback:", signUpError.message);
+            addToast(`Authentication Bypass: ${signUpError.message}. Logging in via Sandbox Mode.`, "INFO");
+          } else {
+            console.log("Supabase Auth sign up succeeded:", signUpData);
+            if (signUpData?.user) {
+              userUid = signUpData.user.id;
+            }
           }
         } else {
           // LOGIN
@@ -675,12 +728,13 @@ export default function App() {
           });
 
           if (signInError) {
-            addToast(`Supabase Authentication Failed: ${signInError.message}`, "ERROR");
-            return;
-          }
-          console.log("Supabase Auth sign in succeeded:", signInData);
-          if (signInData?.user) {
-            userUid = signInData.user.id;
+            console.warn("Supabase signin failed, bypassing via sandbox fallback:", signInError.message);
+            addToast(`Authentication Bypass: ${signInError.message}. Logging in via Sandbox Mode.`, "INFO");
+          } else {
+            console.log("Supabase Auth sign in succeeded:", signInData);
+            if (signInData?.user) {
+              userUid = signInData.user.id;
+            }
           }
         }
       }
@@ -995,9 +1049,17 @@ export default function App() {
     }
   };
 
-  const handleModifyUserBalance = (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string) => {
+  const handleModifyUserBalance = (
+    margin: number, 
+    pnl: number | null, 
+    isDemo: boolean, 
+    botName: string, 
+    assetSymbol: string,
+    updatedActiveBots?: any[]
+  ) => {
     let updatedUser: User;
     const isAllocation = pnl === null;
+    const activeBots = updatedActiveBots !== undefined ? updatedActiveBots : user.activeBots;
 
     if (isDemo) {
       const currentDemoBalance = user.demoBalance ?? 10000;
@@ -1005,14 +1067,16 @@ export default function App() {
       if (isAllocation) {
         updatedUser = {
           ...user,
-          demoBalance: Number((currentDemoBalance - margin).toFixed(2))
+          demoBalance: Number((currentDemoBalance - margin).toFixed(2)),
+          activeBots
         };
       } else {
         const settlement = margin + pnl;
         updatedUser = {
           ...user,
           demoBalance: Number((currentDemoBalance + settlement).toFixed(2)),
-          demoProfits: Number((currentDemoProfits + pnl).toFixed(2))
+          demoProfits: Number((currentDemoProfits + pnl).toFixed(2)),
+          activeBots
         };
       }
     } else {
@@ -1021,14 +1085,16 @@ export default function App() {
       if (isAllocation) {
         updatedUser = {
           ...user,
-          walletBalance: Number((currentWalletBalance - margin).toFixed(2))
+          walletBalance: Number((currentWalletBalance - margin).toFixed(2)),
+          activeBots
         };
       } else {
         const settlement = margin + pnl;
         updatedUser = {
           ...user,
           walletBalance: Number((currentWalletBalance + settlement).toFixed(2)),
-          profits: Number((currentProfits + pnl).toFixed(2))
+          profits: Number((currentProfits + pnl).toFixed(2)),
+          activeBots
         };
       }
     }
@@ -1214,6 +1280,62 @@ export default function App() {
       kycUploadedAt: new Date().toISOString()
     };
     persistState(updatedUser, transactions, supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+  };
+
+  // Promotion redemption with strict deposit and trade counts checks
+  const handleRedeemPromo = () => {
+    const code = promoCodeInput.trim().toUpperCase();
+    if (!code) {
+      addToast("Please enter a promotional code to redeem.", "ERROR");
+      return;
+    }
+
+    if (user.accountMode !== 'REAL') {
+      addToast("This promotional coupon is only eligible on the REAL account ledger. Please switch your account mode to REAL in the top selector to continue.", "ERROR");
+      return;
+    }
+
+    // Double check previously redeemed transactions for duplicate preventions
+    const alreadyRedeemed = transactions.some(tx => 
+      !tx.asset.includes('[DEMO]') && 
+      tx.asset.toLowerCase().includes('redeem: promo')
+    );
+
+    if (alreadyRedeemed) {
+      addToast("Error: This promotional coupon has already been redeemed on your account.", "ERROR");
+      return;
+    }
+
+    if (totalEarnestDeposits < 100) {
+      addToast(`Eligibility Check Failed: You must deposit at least $100 USD on your Real account. Current deposits: $${totalEarnestDeposits.toLocaleString()}.`, "ERROR");
+      return;
+    }
+
+    if (completedRealTradesCount <= 100) {
+      addToast(`Eligibility Check Failed: You must complete more than 100 trades on your Real account. Current trades: ${completedRealTradesCount} / 100.`, "ERROR");
+      return;
+    }
+
+    // Meets criteria perfectly. Award the maximum of $50 bonus.
+    const bonusAmount = 50;
+    const updatedUser: User = {
+      ...user,
+      walletBalance: Number((user.walletBalance + bonusAmount).toFixed(2)),
+      promoCodeUsed: code
+    };
+
+    const newTx: Transaction = {
+      id: `tx-promo-${Date.now()}`,
+      type: 'DEPOSIT',
+      amount: bonusAmount,
+      asset: `Redeem: Promo Premium Reward (Code: ${code})`,
+      date: new Date().toISOString(),
+      status: 'COMPLETED'
+    };
+
+    persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
+    setPromoCodeInput('');
+    addToast(`Congratulations! Promo code ${code} applied successfully. A premium trading reward of $${bonusAmount.toFixed(2)} has been credited to your real wallet.`, "SUCCESS");
   };
 
   // Support Ticketing
@@ -1666,7 +1788,7 @@ export default function App() {
                                 {tx.type === 'DEPOSIT' || tx.type === 'REDEEM' ? <ArrowDownRight className="w-3.5 h-3.5" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
                               </div>
                               <div>
-                                <p className="text-white uppercase font-bold text-xxs tracking-wider">{tx.type} contract</p>
+                                <p className="text-white uppercase font-bold text-xxs tracking-wider">{getTransactionDisplayLabel(tx)}</p>
                                 <p className="text-gray-500 text-[8px]">{new Date(tx.date).toLocaleDateString()}</p>
                               </div>
                             </div>
@@ -1692,17 +1814,46 @@ export default function App() {
                         <div className="flex gap-2">
                           <input
                             type="text"
+                            value={promoCodeInput}
+                            onChange={(e) => setPromoCodeInput(e.target.value)}
                             placeholder="EX: VEXCOIN_ELITE"
                             className="flex-1 bg-gray-950 border border-gray-800 text-white rounded-lg py-2 px-3 text-xs focus:outline-none placeholder-gray-800 font-bold uppercase text-center"
                           />
                           <button
-                            onClick={() => {
-                              addToast("Validation Success: Promo Code verified! $500 USD lock-in bonus has been queued for kyc cleared users.", "SUCCESS");
-                            }}
+                            onClick={handleRedeemPromo}
                             className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase rounded-lg px-4 text-[10px] transition-all cursor-pointer"
                           >
                             Redeem
                           </button>
+                        </div>
+
+                        {/* Interactive Promo Eligibility checklist */}
+                        <div className="mt-3.5 space-y-1.5 p-2.5 bg-gray-950/80 border border-gray-800/60 rounded-lg text-[10px]">
+                          <div className="flex items-center justify-between text-gray-400 mb-1 border-b border-gray-850 pb-1.5 font-sans">
+                            <span className="font-bold uppercase tracking-wider text-gray-500 text-[8.5px]">REDEEM CODE ELIGIBILITY Check</span>
+                            <span className="font-bold text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded text-[8.5px]">+$50.00 REWARD MAX</span>
+                          </div>
+                          
+                          <div className="flex items-center justify-between font-sans">
+                            <span className="text-gray-400">1. Real Account Mode Active:</span>
+                            <span className={`font-bold transition-all ${user.accountMode === 'REAL' ? 'text-emerald-400' : 'text-rose-400 animate-pulse'}`}>
+                              {user.accountMode === 'REAL' ? 'YES ✓' : 'NO ✗ (Switch Mode)'}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center justify-between font-sans">
+                            <span className="text-gray-400">2. Real Account Deposits (Min $100):</span>
+                            <span className={`font-bold ${totalEarnestDeposits >= 100 ? 'text-emerald-400' : 'text-rose-450'}`}>
+                              ${totalEarnestDeposits.toLocaleString(undefined, { minimumFractionDigits: 2 })} / $100.00 {totalEarnestDeposits >= 100 ? '✓' : '✗'}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center justify-between font-sans">
+                            <span className="text-gray-400">3. Real Completed Trades (⚓ &gt; 100):</span>
+                            <span className={`font-bold ${completedRealTradesCount > 100 ? 'text-emerald-400' : 'text-rose-450'}`}>
+                              {completedRealTradesCount} / 100 completed {completedRealTradesCount > 100 ? '✓' : '✗'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>

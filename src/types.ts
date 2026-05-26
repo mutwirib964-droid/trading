@@ -98,3 +98,44 @@ export interface SupportTicket {
     timestamp: string;
   }[];
 }
+
+export function getTransactionDisplayLabel(tx: { id: string; type: string; asset?: string }) {
+  const idLower = (tx.id || '').toLowerCase();
+  const assetLower = (tx.asset || '').toLowerCase();
+  const typeLower = (tx.type || '').toLowerCase();
+
+  // 1. Bot
+  if (idLower.includes('bot') || assetLower.includes('bot')) {
+    return "BOT";
+  }
+  // 2. Copy Trading
+  if (idLower.includes('copy') || idLower.includes('release') || assetLower.includes('copy') || assetLower.includes('allocation trade') || assetLower.includes('release allocation')) {
+    return "COPY ALLOCATED TRADING";
+  }
+  // 3. Yield
+  if (idLower.includes('stake') || idLower.includes('redeem') || idLower.includes('invest') || typeLower === 'invest' || typeLower === 'redeem') {
+    return "YIELD";
+  }
+  // 4. Financial Deposit
+  if (idLower.includes('fin') && typeLower === 'deposit') {
+    return "DEPOSIT";
+  }
+  // 5. Financial Withdrawal
+  if (idLower.includes('fin') && typeLower === 'withdrawal') {
+    return "WITHDRAWAL";
+  }
+  // 6. Trade at terminal
+  if (idLower.startsWith('tx-') && !idLower.includes('fin') && !idLower.includes('bot') && !idLower.includes('copy') && !idLower.includes('release') && !idLower.includes('stake') && !idLower.includes('redeem')) {
+    return "TRADES";
+  }
+
+  // Fallback defaults
+  if (typeLower === 'deposit') {
+    return "DEPOSIT";
+  }
+  if (typeLower === 'withdrawal') {
+    return "WITHDRAWAL";
+  }
+  
+  return tx.type;
+}

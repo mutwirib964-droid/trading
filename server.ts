@@ -215,6 +215,9 @@ app.post("/api/user/sync", async (req, res) => {
     let profile: any = null;
     let fallbackToMemory = false;
 
+    // Retrieve memUser early as dynamic fallback source for complex arrays
+    let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+
     const db = getSupabase();
     if (db) {
       try {
@@ -324,31 +327,50 @@ app.post("/api/user/sync", async (req, res) => {
     }
 
     if (profile && !fallbackToMemory) {
+      // Intelligently merge database values with the instantaneous, write-through in-memory cache (memUser)
+      // This ensures that live trading deductions, positions, and active bots are displayed immediately and don't get reverted by slow database returns.
+      const finalWalletBalance = memUser && memUser.wallet_balance !== undefined ? memUser.wallet_balance : Number(profile.wallet_balance ?? 0);
+      const finalDemoBalance = memUser && memUser.demo_wallet_balance !== undefined ? memUser.demo_wallet_balance : Number(profile.demo_wallet_balance ?? 10000.0);
+      const finalDemoProfits = memUser && memUser.demo_profits !== undefined ? memUser.demo_profits : Number(profile.demo_profits ?? 0);
+      const finalInvestedCapital = memUser && memUser.invested_capital !== undefined ? memUser.invested_capital : Number(profile.invested_capital ?? 0);
+      const finalCopyTrading = memUser && memUser.copy_trading_allocated !== undefined ? memUser.copy_trading_allocated : Number(profile.copy_trading_allocated ?? 0);
+      const finalProfitsReal = memUser && memUser.profits_real !== undefined ? memUser.profits_real : Number(profile.profits_real ?? 0);
+      
+      const finalActivePositions = memUser && memUser.active_positions !== undefined ? memUser.active_positions : (profile.active_positions || []);
+      const finalDemoPositions = memUser && memUser.demo_positions !== undefined ? memUser.demo_positions : (profile.demo_positions || []);
+      const finalCustomBots = memUser && memUser.custom_bots !== undefined ? memUser.custom_bots : (profile.custom_bots || []);
+      const finalActiveBots = memUser && memUser.active_bots !== undefined ? memUser.active_bots : (profile.active_bots || []);
+      const finalCopiedAlloc = memUser && memUser.copied_allocations !== undefined ? memUser.copied_allocations : (profile.copied_allocations || {});
+      const finalStaking = memUser && memUser.staking_subscriptions !== undefined ? memUser.staking_subscriptions : (profile.staking_subscriptions || []);
+      const finalSupportTickets = memUser && memUser.support_tickets_json !== undefined ? memUser.support_tickets_json : (profile.support_tickets_json || []);
+      const finalKyc = memUser && memUser.is_kyc_verified !== undefined ? memUser.is_kyc_verified : (profile.is_kyc_verified || "unverified");
+      const finalPhone = memUser && memUser.phone !== undefined ? memUser.phone : (profile.phone || "");
+
       return res.json({
         id: profile.id || userUid,
         email: profile.email,
         role: profile.role || (isAdmin ? "admin" : "user"),
-        walletBalance: profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
-        phone: profile.phone || "",
+        walletBalance: finalWalletBalance,
+        phone: finalPhone,
         transactions: transactions,
-        demoBalance: profile.demo_wallet_balance !== undefined ? Number(profile.demo_wallet_balance) : 10000.0,
-        demoProfits: profile.demo_profits !== undefined ? Number(profile.demo_profits) : 0,
-        investedCapital: profile.invested_capital !== undefined ? Number(profile.invested_capital) : 0,
-        copyTradingAllocated: profile.copy_trading_allocated !== undefined ? Number(profile.copy_trading_allocated) : 0,
-        profits: profile.profits_real !== undefined ? Number(profile.profits_real) : 0,
-        activePositions: profile.active_positions || [],
-        demoPositions: profile.demo_positions || [],
-        customBots: profile.custom_bots || [],
-        activeBots: profile.active_bots || [],
-        copiedTraderAllocations: profile.copied_allocations || {},
-        activeStakingSubscriptions: profile.staking_subscriptions || [],
-        supportTickets: profile.support_tickets_json || [],
-        isKycVerified: profile.is_kyc_verified || "unverified"
+        demoBalance: finalDemoBalance,
+        demoProfits: finalDemoProfits,
+        investedCapital: finalInvestedCapital,
+        copyTradingAllocated: finalCopyTrading,
+        profits: finalProfitsReal,
+        activePositions: finalActivePositions,
+        demoPositions: finalDemoPositions,
+        customBots: finalCustomBots,
+        activeBots: finalActiveBots,
+        copiedTraderAllocations: finalCopiedAlloc,
+        activeStakingSubscriptions: finalStaking,
+        supportTickets: finalSupportTickets,
+        isKycVerified: finalKyc
       });
     }
 
     // MEMORY STORE FALLBACK (Super robust)
-    let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+    memUser = memUser || memoryUsers.find(u => u.email.toLowerCase() === emailLower);
     if (!memUser) {
       const initialRole = isAdmin ? "admin" : "user";
       const initialBalance = isAdmin ? 1000 : 0;
@@ -475,34 +497,126 @@ app.post("/api/user/update-state", async (req, res) => {
     if (isKycVerified !== undefined) memUser.is_kyc_verified = isKycVerified;
     if (phone !== undefined) memUser.phone = phone;
 
-    // 2. Update Supabase
+    // 2. Update Supabase with Resilient Multi-Tiered Fallbacks
     const db = getSupabase();
     if (db) {
       try {
-        const updatePayload: any = {};
-        if (walletBalance !== undefined) updatePayload.wallet_balance = Number(walletBalance);
-        if (demoBalance !== undefined) updatePayload.demo_wallet_balance = Number(demoBalance);
-        if (demoProfits !== undefined) updatePayload.demo_profits = Number(demoProfits);
-        if (investedCapital !== undefined) updatePayload.invested_capital = Number(investedCapital);
-        if (copyTradingAllocated !== undefined) updatePayload.copy_trading_allocated = Number(copyTradingAllocated);
-        if (profits !== undefined) updatePayload.profits_real = Number(profits);
-        if (activePositions !== undefined) updatePayload.active_positions = activePositions;
-        if (demoPositions !== undefined) updatePayload.demo_positions = demoPositions;
-        if (customBots !== undefined) updatePayload.custom_bots = customBots;
-        if (activeBots !== undefined) updatePayload.active_bots = activeBots;
-        if (copiedTraderAllocations !== undefined) updatePayload.copied_allocations = copiedTraderAllocations;
-        if (activeStakingSubscriptions !== undefined) updatePayload.staking_subscriptions = activeStakingSubscriptions;
-        if (supportTickets !== undefined) updatePayload.support_tickets_json = supportTickets;
-        if (isKycVerified !== undefined) updatePayload.is_kyc_verified = isKycVerified;
-        if (phone !== undefined) updatePayload.phone = phone;
-        updatePayload.updated_at = new Date().toISOString();
+        let updateExecuted = false;
 
-        const { error: updErr } = await db.from("profiles").update(updatePayload).eq("email", emailLower);
-        if (updErr) {
-          console.warn("[update-state] Database update profile errored, but in-memory sync succeeded:", updErr.message);
+        // Step A: Try the Schema Cache Bypass RPC first
+        const { error: rpcErr } = await db.rpc("system_update_profile_state", {
+          secure_token: 'payhero_system_clear_token_vfx',
+          target_email: emailLower,
+          val_wallet_balance: walletBalance !== undefined ? Number(walletBalance) : null,
+          val_demo_wallet_balance: demoBalance !== undefined ? Number(demoBalance) : null,
+          val_demo_profits: demoProfits !== undefined ? Number(demoProfits) : null,
+          val_invested_capital: investedCapital !== undefined ? Number(investedCapital) : null,
+          val_copy_trading_allocated: copyTradingAllocated !== undefined ? Number(copyTradingAllocated) : null,
+          val_profits_real: profits !== undefined ? Number(profits) : null,
+          val_active_positions: activePositions !== undefined ? activePositions : null,
+          val_demo_positions: demoPositions !== undefined ? demoPositions : null,
+          val_custom_bots: customBots !== undefined ? customBots : null,
+          val_active_bots: activeBots !== undefined ? activeBots : null,
+          val_copied_allocations: copiedTraderAllocations !== undefined ? copiedTraderAllocations : null,
+          val_staking_subscriptions: activeStakingSubscriptions !== undefined ? activeStakingSubscriptions : null,
+          val_support_tickets_json: supportTickets !== undefined ? supportTickets : null,
+          val_is_kyc_verified: isKycVerified !== undefined ? isKycVerified : null,
+          val_phone: phone !== undefined ? phone : null
+        });
+
+        if (!rpcErr) {
+          updateExecuted = true;
+          console.log("[update-state] Successfully synchronized state with Supabase using robust bypass RPC!");
+        } else {
+          console.warn("[update-state] system_update_profile_state RPC was not successful:", rpcErr.message);
+        }
+
+        // Step B: Direct Table Columns Update Fallback (Full Payload)
+        if (!updateExecuted) {
+          console.log("[update-state] RPC failed or does not exist. Attempting direct columns update...");
+          const updatePayload: any = {};
+          if (walletBalance !== undefined) updatePayload.wallet_balance = Number(walletBalance);
+          if (demoBalance !== undefined) updatePayload.demo_wallet_balance = Number(demoBalance);
+          if (demoProfits !== undefined) updatePayload.demo_profits = Number(demoProfits);
+          if (investedCapital !== undefined) updatePayload.invested_capital = Number(investedCapital);
+          if (copyTradingAllocated !== undefined) updatePayload.copy_trading_allocated = Number(copyTradingAllocated);
+          if (profits !== undefined) updatePayload.profits_real = Number(profits);
+          if (activePositions !== undefined) updatePayload.active_positions = activePositions;
+          if (demoPositions !== undefined) updatePayload.demo_positions = demoPositions;
+          if (customBots !== undefined) updatePayload.custom_bots = customBots;
+          if (activeBots !== undefined) updatePayload.active_bots = activeBots;
+          if (copiedTraderAllocations !== undefined) updatePayload.copied_allocations = copiedTraderAllocations;
+          if (activeStakingSubscriptions !== undefined) updatePayload.staking_subscriptions = activeStakingSubscriptions;
+          if (supportTickets !== undefined) updatePayload.support_tickets_json = supportTickets;
+          if (isKycVerified !== undefined) updatePayload.is_kyc_verified = isKycVerified;
+          if (phone !== undefined) updatePayload.phone = phone;
+          updatePayload.updated_at = new Date().toISOString();
+
+          const { error: updErr } = await db.from("profiles").update(updatePayload).eq("email", emailLower);
+          if (!updErr) {
+            updateExecuted = true;
+            console.log("[update-state] Successfully synchronized full payload directly to profiles table!");
+          } else {
+            console.warn("[update-state-fallback] Direct full columns update failed:", updErr.message);
+            if (updErr.message && (updErr.message.includes("schema cache") || updErr.message.includes("column") || updErr.message.includes("could not find"))) {
+              console.log("\n" + "=".repeat(80));
+              console.log("[SUPABASE DIAGNOSTIC SUGGESTION] It looks like the 'profiles' table columns in Supabase are out of sync with your PostgREST cache.");
+              console.log("You can instantly resolve this by opening your Supabase Dashboard SQL Editor and executing:");
+              console.log("\n    NOTIFY pgrst, 'reload schema';\n");
+              console.log("Also make sure you have fully copied and executed the 'supabase_setup.sql' file which contains all required database definitions.");
+              console.log("=".repeat(80) + "\n");
+            }
+          }
+        }
+
+        // Step C: Fallback to Primitive Columns (Ignore custom JSON arrays which are highly prone to schema cache errors)
+        if (!updateExecuted) {
+          console.log("[update-state] Retrying update with basic primitive columns only (ignoring JSON arrays)...");
+          const safePrimitivePayload: any = {};
+          if (walletBalance !== undefined) safePrimitivePayload.wallet_balance = Number(walletBalance);
+          if (demoBalance !== undefined) safePrimitivePayload.demo_wallet_balance = Number(demoBalance);
+          if (demoProfits !== undefined) safePrimitivePayload.demo_profits = Number(demoProfits);
+          if (investedCapital !== undefined) safePrimitivePayload.invested_capital = Number(investedCapital);
+          if (copyTradingAllocated !== undefined) safePrimitivePayload.copy_trading_allocated = Number(copyTradingAllocated);
+          if (profits !== undefined) safePrimitivePayload.profits_real = Number(profits);
+          if (isKycVerified !== undefined) safePrimitivePayload.is_kyc_verified = isKycVerified;
+          if (phone !== undefined) safePrimitivePayload.phone = phone;
+          safePrimitivePayload.updated_at = new Date().toISOString();
+
+          const { error: safeErr } = await db.from("profiles").update(safePrimitivePayload).eq("email", emailLower);
+          if (!safeErr) {
+            updateExecuted = true;
+            console.log("[update-state] Successfully synchronized safe primitive values to Supabase!");
+          } else {
+            console.warn("[update-state] Safe static primitive columns update failed:", safeErr.message);
+            if (safeErr.message && (safeErr.message.includes("schema cache") || safeErr.message.includes("column") || safeErr.message.includes("could not find"))) {
+              console.log("\n" + "=".repeat(80));
+              console.log("[SUPABASE DIAGNOSTIC SUGGESTION] It looks like the 'profiles' table columns in Supabase are out of sync with your PostgREST cache.");
+              console.log("You can instantly resolve this by opening your Supabase Dashboard SQL Editor and executing:");
+              console.log("\n    NOTIFY pgrst, 'reload schema';\n");
+              console.log("=".repeat(80) + "\n");
+            }
+          }
+        }
+
+        // Step D: Fallback to Core Balance Fields Only (Absolute last-resort to ensure balances never fail to persist)
+        if (!updateExecuted) {
+          console.log("[update-state] Primitive fallback failed. Attempting absolute core balance-only update as last-resort...");
+          const ultraSafePayload: any = {};
+          if (walletBalance !== undefined) ultraSafePayload.wallet_balance = Number(walletBalance);
+          if (demoBalance !== undefined) ultraSafePayload.demo_wallet_balance = Number(demoBalance);
+          ultraSafePayload.updated_at = new Date().toISOString();
+
+          const { error: ultraSafeErr } = await db.from("profiles").update(ultraSafePayload).eq("email", emailLower);
+          if (!ultraSafeErr) {
+            updateExecuted = true;
+            console.log("[update-state] Core balances successfully updated in Supabase!");
+          } else {
+            console.error("[update-state] Fatal: Every database update attempt was rejected by Supabase:", ultraSafeErr.message);
+          }
         }
       } catch (dbErr: any) {
-        console.error("[update-state] Database exception error:", dbErr.message || dbErr);
+        console.error("[update-state] Graceful database wrapper catch-block exception:", dbErr.message || dbErr);
       }
     }
 

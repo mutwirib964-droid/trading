@@ -29,6 +29,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_profits NUMERIC(15, 4)
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS invested_capital NUMERIC(15, 4) DEFAULT 0.0000;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS copy_trading_allocated NUMERIC(15, 4) DEFAULT 0.0000;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS profits_real NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS promo_code_used TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
@@ -47,9 +48,30 @@ ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
+-- 2b. Ensure the trades table exists (to support demo/real-time trade state alignment query ledger)
+CREATE TABLE IF NOT EXISTS public.trades (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text
+);
+
+-- Dynamically add all expected columns to the trades table to prevent schema mismatch errors!
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS user_email TEXT;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS asset_symbol TEXT;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS asset_name TEXT;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS type TEXT; -- 'BUY' or 'SELL'
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS entry_price NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS current_price NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS amount NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS leverage NUMERIC(15, 4) DEFAULT 1.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS margin NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS pnl NUMERIC(15, 4) DEFAULT 0.0000;
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'OPEN'; -- 'OPEN' or 'CLOSED'
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS account_mode TEXT DEFAULT 'REAL'; -- 'REAL' or 'DEMO'
+ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
+
 -- Enable Row Level Security (RLS) to protect client ledger records
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 
 -- 3. Clean out any conflicting pre-existing security policies dynamically to prevent recursion issues!
 DO $$
@@ -72,6 +94,15 @@ BEGIN
         WHERE schemaname = 'public' AND tablename = 'transactions'
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.transactions', pol.policyname);
+    END LOOP;
+
+    -- Dynamically drop all existing policies on public.trades
+    FOR pol IN 
+        SELECT policyname 
+        FROM pg_policies 
+        WHERE schemaname = 'public' AND tablename = 'trades'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.trades', pol.policyname);
     END LOOP;
 END $$;
 
@@ -114,7 +145,7 @@ BEGIN
   END IF;
 
   -- If not admin, block changes to sensitive columns
-  IF (auth.jwt() ->> 'email') IS DISTINCT FROM 'mutwirib964@gmail.com' THEN
+  IF (auth.jwt() ->> 'email') IS NOT NULL AND (auth.jwt() ->> 'email') IS DISTINCT FROM 'mutwirib964@gmail.com' THEN
     IF OLD.role IS DISTINCT FROM NEW.role 
        OR OLD.wallet_balance IS DISTINCT FROM NEW.wallet_balance 
        OR OLD.total_deposited IS DISTINCT FROM NEW.total_deposited 
@@ -153,6 +184,40 @@ USING (
 
 CREATE POLICY "Allow administrative full transactions access"
 ON public.transactions FOR ALL
+USING (
+  auth.jwt() ->> 'email' = 'mutwirib964@gmail.com'
+)
+WITH CHECK (
+  auth.jwt() ->> 'email' = 'mutwirib964@gmail.com'
+);
+
+-- Trades Policies
+CREATE POLICY "Allow user read own trades"
+ON public.trades FOR SELECT
+USING (
+  auth.jwt() ->> 'email' = user_email
+);
+
+CREATE POLICY "Allow user insert own trades"
+ON public.trades FOR INSERT
+WITH CHECK (
+  auth.jwt() ->> 'email' = user_email
+);
+
+CREATE POLICY "Allow user update own trades"
+ON public.trades FOR UPDATE
+USING (
+  auth.jwt() ->> 'email' = user_email
+);
+
+CREATE POLICY "Allow administrative read all trades"
+ON public.trades FOR SELECT
+USING (
+  auth.jwt() ->> 'email' = 'mutwirib964@gmail.com'
+);
+
+CREATE POLICY "Allow administrative full trades access"
+ON public.trades FOR ALL
 USING (
   auth.jwt() ->> 'email' = 'mutwirib964@gmail.com'
 )
@@ -401,6 +466,57 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
+CREATE OR REPLACE FUNCTION public.system_update_profile_state(
+    secure_token TEXT,
+    target_email TEXT,
+    val_wallet_balance NUMERIC DEFAULT NULL,
+    val_demo_wallet_balance NUMERIC DEFAULT NULL,
+    val_demo_profits NUMERIC DEFAULT NULL,
+    val_invested_capital NUMERIC DEFAULT NULL,
+    val_copy_trading_allocated NUMERIC DEFAULT NULL,
+    val_profits_real NUMERIC DEFAULT NULL,
+    val_active_positions JSONB DEFAULT NULL,
+    val_demo_positions JSONB DEFAULT NULL,
+    val_custom_bots JSONB DEFAULT NULL,
+    val_active_bots JSONB DEFAULT NULL,
+    val_copied_allocations JSONB DEFAULT NULL,
+    val_staking_subscriptions JSONB DEFAULT NULL,
+    val_support_tickets_json JSONB DEFAULT NULL,
+    val_is_kyc_verified TEXT DEFAULT NULL,
+    val_phone TEXT DEFAULT NULL,
+    val_promo_code_used TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+DECLARE
+    expected_token TEXT := 'payhero_system_clear_token_vfx';
+BEGIN
+    IF secure_token <> expected_token THEN
+        RAISE EXCEPTION 'Invalid system clearance token.';
+    END IF;
+
+    UPDATE public.profiles
+    SET 
+        wallet_balance = COALESCE(val_wallet_balance, wallet_balance),
+        demo_wallet_balance = COALESCE(val_demo_wallet_balance, demo_wallet_balance),
+        demo_profits = COALESCE(val_demo_profits, demo_profits),
+        invested_capital = COALESCE(val_invested_capital, invested_capital),
+        copy_trading_allocated = COALESCE(val_copy_trading_allocated, copy_trading_allocated),
+        profits_real = COALESCE(val_profits_real, profits_real),
+        active_positions = COALESCE(val_active_positions, active_positions),
+        demo_positions = COALESCE(val_demo_positions, demo_positions),
+        custom_bots = COALESCE(val_custom_bots, custom_bots),
+        active_bots = COALESCE(val_active_bots, active_bots),
+        copied_allocations = COALESCE(val_copied_allocations, copied_allocations),
+        staking_subscriptions = COALESCE(val_staking_subscriptions, staking_subscriptions),
+        support_tickets_json = COALESCE(val_support_tickets_json, support_tickets_json),
+        is_kyc_verified = COALESCE(val_is_kyc_verified, is_kyc_verified),
+        phone = COALESCE(val_phone, phone),
+        promo_code_used = COALESCE(val_promo_code_used, promo_code_used),
+        updated_at = timezone('utc'::text, now())
+    WHERE LOWER(email) = LOWER(target_email);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
 -- 7. Automatic Sync: Set up a trigger to automatically sync new auth.users to public.profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
@@ -460,6 +576,13 @@ GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authent
 -- Grant column/table level access explicitly for tables to prevent permission denied state
 GRANT ALL PRIVILEGES ON public.profiles TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON public.transactions TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON public.trades TO postgres, anon, authenticated, service_role;
+
+-- 10. Force Reload PostgREST Schema Cache
+-- This ensures that any newly added columns or RPC routines are instantly visible
+-- to the PostgREST API without requiring a database reboot or manual cache clear.
+NOTIFY pgrst, 'reload schema';
+
 
 
 
