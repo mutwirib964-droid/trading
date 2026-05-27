@@ -1,4 +1,4 @@
-# Netlify configuration file for VexcoinFX Full-Stack Serverless Deployment
+# Netlify configuration file for NetacoinFX Full-Stack Serverless Deployment
 
 [build]
   command = "npm run build"

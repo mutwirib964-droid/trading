@@ -244,7 +244,7 @@ export default function SupportPortal({ user, onUpdateKyc, tickets, onAddTicket,
           <div className="space-y-1">
             <span className="text-white font-bold font-sans uppercase flex items-center gap-1">
               <HelpCircle className="w-3.5 h-3.5 text-emerald-400" />
-              What is Vexcoin Copy Trading?
+              What is Netacoin Copy Trading?
             </span>
             <p className="text-gray-500 text-[9.5px]">
               Copy-trading allocations replicate institutional traders. When they capture margin positions, your capital replicates a proportionate position, yielding equal performance indices instantly.

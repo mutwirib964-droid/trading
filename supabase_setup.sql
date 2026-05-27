@@ -1,4 +1,4 @@
--- VexcoinFX Supabase Setup & Administration Query Ledger
+-- NetacoinFX Supabase Setup & Administration Query Ledger
 -- Copy and run this script inside your Supabase dashboard SQL Editor (https://supabase.com) 
 -- to configure database tables, set up exclusive administrator rights for mutwirib964@gmail.com,
 -- and establish strong, failsafe Row Level Security (RLS) policies.
@@ -521,7 +521,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, name, role, wallet_balance, demo_wallet_balance, is_kyc_verified)
+  INSERT INTO public.profiles (id, email, name, role, wallet_balance, demo_wallet_balance, is_kyc_verified, phone)
   VALUES (
     new.id,
     new.email,
@@ -529,11 +529,13 @@ BEGIN
     'user',
     0.0000,
     10000.0000,
-    'unverified'
+    'unverified',
+    COALESCE(new.raw_user_meta_data->>'phone', '')
   )
   ON CONFLICT (email) DO UPDATE SET
     id = EXCLUDED.id,
-    name = COALESCE(public.profiles.name, EXCLUDED.name);
+    name = COALESCE(public.profiles.name, EXCLUDED.name),
+    phone = COALESCE(public.profiles.phone, EXCLUDED.phone);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

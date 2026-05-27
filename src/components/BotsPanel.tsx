@@ -268,12 +268,41 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleFinalizeBotTrade = (inst: ActiveBotInstance, remainingActiveBots?: ActiveBotInstance[]) => {
+    const isDemo = inst.isDemo;
+    const pnl = inst.targetPnl;
+
+    if (pnl >= 0) {
+      addToast(`[SUCCESS] Bot ${inst.botName} won! Settle payout: +$${pnl.toLocaleString()} (${((pnl / inst.margin) * 100).toFixed(1)}% profit on margin).`, "SUCCESS");
+    } else {
+      addToast(`[ALERT] Bot ${inst.botName} trace resolved in loss. Settle loss: -$${Math.abs(pnl).toLocaleString()} (${((Math.abs(pnl) / inst.margin) * 100).toFixed(1)}% writeoff).`, "ERROR");
+    }
+
+    // Call callback to commit changes to parent and save immediately
+    onModifyUserBalance(inst.margin, pnl, isDemo, inst.botName, inst.assetSymbol, remainingActiveBots);
+  };
+
+  const userRef = useRef(user);
+  const handleFinalizeBotTradeRef = useRef(handleFinalizeBotTrade);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    handleFinalizeBotTradeRef.current = handleFinalizeBotTrade;
+  }, [handleFinalizeBotTrade]);
+
+  const hasActiveInstances = activeInstances.length > 0;
+
   // Sync active instances block on ticker
   useEffect(() => {
-    if (activeInstances.length === 0) return;
+    if (!hasActiveInstances) return;
 
     const interval = setInterval(() => {
       setActiveInstances((prev) => {
+        if (prev.length === 0) return prev;
+
         const updated = prev.map((inst) => {
           const newTimeLeft = inst.timeLeft - 1;
           const newElapsedTime = inst.elapsedTime + 1;
@@ -300,7 +329,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
           if (newTimeLeft <= 0) {
             // Settle Bot Trade!
             const remaining = prev.filter(i => i.botId !== inst.botId);
-            handleFinalizeBotTrade(inst, remaining);
+            handleFinalizeBotTradeRef.current(inst, remaining);
             return null;
           }
 
@@ -322,13 +351,15 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
         }).filter(Boolean) as ActiveBotInstance[];
 
         localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(updated));
-        if (user && user.email) {
-          const completedSome = activeInstances.length !== updated.length;
+        
+        const currentUser = userRef.current;
+        if (currentUser && currentUser.email) {
+          const completedSome = prev.length !== updated.length;
           if (completedSome) {
             fetch(getApiUrl('/api/user/update-state'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: user.email, activeBots: updated })
+              body: JSON.stringify({ email: currentUser.email, activeBots: updated })
             }).catch(e => console.warn(e));
           }
         }
@@ -337,21 +368,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeInstances, user, bots]);
-
-  const handleFinalizeBotTrade = (inst: ActiveBotInstance, remainingActiveBots?: ActiveBotInstance[]) => {
-    const isDemo = inst.isDemo;
-    const pnl = inst.targetPnl;
-
-    if (pnl >= 0) {
-      addToast(`[SUCCESS] Bot ${inst.botName} won! Settle payout: +$${pnl.toLocaleString()} (${((pnl / inst.margin) * 100).toFixed(1)}% profit on margin).`, "SUCCESS");
-    } else {
-      addToast(`[ALERT] Bot ${inst.botName} trace resolved in loss. Settle loss: -$${Math.abs(pnl).toLocaleString()} (${((Math.abs(pnl) / inst.margin) * 100).toFixed(1)}% writeoff).`, "ERROR");
-    }
-
-    // Call callback to commit changes to parent and save immediately
-    onModifyUserBalance(inst.margin, pnl, isDemo, inst.botName, inst.assetSymbol, remainingActiveBots);
-  };
+  }, [hasActiveInstances]);
 
   const handleCreateBot = (e: React.FormEvent) => {
     e.preventDefault();
@@ -408,7 +425,7 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", "vexcoinfx_bot_blueprint.json");
+    downloadAnchor.setAttribute("download", "netacoinfx_bot_blueprint.json");
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();

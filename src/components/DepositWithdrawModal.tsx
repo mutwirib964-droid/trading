@@ -65,7 +65,6 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
           const data = await resp.json();
           if (data.status === 'COMPLETED') {
             setStkStatus('COMPLETED');
-            addToast("M-Pesa Payment Received & Profile Balance Updated!", "SUCCESS");
             
             // Credit real balance and log transaction on client
             onModifyBalance('DEPOSIT', stkUsdValue, {
@@ -213,8 +212,6 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       asset: assetName,
       address: notes
     });
-
-    addToast(`Successfully cleared deposit of $${amt.toLocaleString()} to wallet balance!`, "SUCCESS");
   };
 
   const handleWithdrawalRequest = (e: React.FormEvent) => {
@@ -257,7 +254,6 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       phone: withdrawMethod === 'MPESA' ? withdrawPhoneNum : undefined
     });
 
-    addToast(`Withdrawal of $${amt.toLocaleString()} submitted successfully. Processing on the ledger...`, "SUCCESS");
     setWithdrawAddr('');
   };
 
@@ -352,7 +348,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-emerald-400 text-xs font-bold uppercase tracking-widest font-display">SUCCESS CALLBACK CONFIRMED</h3>
                     <p className="text-gray-300 text-xxs font-semibold leading-relaxed max-w-sm">
-                      Payhero gateway cleared. VexcoinFX has successfully synced ${stkUsdValue} USD to your account ledger!
+                      Payhero gateway cleared. NetacoinFX has successfully synced ${stkUsdValue} USD to your account ledger!
                     </p>
                   </div>
 
@@ -664,7 +660,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                         <div className="space-y-1.5 border-t border-gray-800 pt-1.5 text-[10px]">
                           <div className="flex justify-between">
                             <span>Beneficiary:</span>
-                            <span className="text-white">VexcoinFX Cleared Escrow Solutions</span>
+                            <span className="text-white">NetacoinFX Cleared Escrow Solutions</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Receiving Bank:</span>

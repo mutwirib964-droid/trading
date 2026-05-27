@@ -114,7 +114,7 @@ interface TxMemory {
 
 const memoryUsers: UserMemory[] = [
   { id: "admin-mutwiri", email: "mutwirib964@gmail.com", role: "admin", wallet_balance: 1000, total_deposited: 1000 },
-  { id: "test-user-1", email: "trader@vexcoin.com", role: "user", wallet_balance: 0, total_deposited: 0 }
+  { id: "test-user-1", email: "trader@netacoin.com", role: "user", wallet_balance: 0, total_deposited: 0 }
 ];
 const memoryTransactions: TxMemory[] = [];
 
@@ -503,69 +503,65 @@ app.post("/api/user/update-state", async (req, res) => {
       try {
         let updateExecuted = false;
 
-        // Step A: Try the Schema Cache Bypass RPC first
-        const { error: rpcErr } = await db.rpc("system_update_profile_state", {
-          secure_token: 'payhero_system_clear_token_vfx',
-          target_email: emailLower,
-          val_wallet_balance: walletBalance !== undefined ? Number(walletBalance) : null,
-          val_demo_wallet_balance: demoBalance !== undefined ? Number(demoBalance) : null,
-          val_demo_profits: demoProfits !== undefined ? Number(demoProfits) : null,
-          val_invested_capital: investedCapital !== undefined ? Number(investedCapital) : null,
-          val_copy_trading_allocated: copyTradingAllocated !== undefined ? Number(copyTradingAllocated) : null,
-          val_profits_real: profits !== undefined ? Number(profits) : null,
-          val_active_positions: activePositions !== undefined ? activePositions : null,
-          val_demo_positions: demoPositions !== undefined ? demoPositions : null,
-          val_custom_bots: customBots !== undefined ? customBots : null,
-          val_active_bots: activeBots !== undefined ? activeBots : null,
-          val_copied_allocations: copiedTraderAllocations !== undefined ? copiedTraderAllocations : null,
-          val_staking_subscriptions: activeStakingSubscriptions !== undefined ? activeStakingSubscriptions : null,
-          val_support_tickets_json: supportTickets !== undefined ? supportTickets : null,
-          val_is_kyc_verified: isKycVerified !== undefined ? isKycVerified : null,
-          val_phone: phone !== undefined ? phone : null
-        });
+        // Step A: Try Direct Table Columns Update First (Standard PostgreSQL Update)
+        const updatePayload: any = {};
+        if (walletBalance !== undefined) updatePayload.wallet_balance = Number(walletBalance);
+        if (demoBalance !== undefined) updatePayload.demo_wallet_balance = Number(demoBalance);
+        if (demoProfits !== undefined) updatePayload.demo_profits = Number(demoProfits);
+        if (investedCapital !== undefined) updatePayload.invested_capital = Number(investedCapital);
+        if (copyTradingAllocated !== undefined) updatePayload.copy_trading_allocated = Number(copyTradingAllocated);
+        if (profits !== undefined) updatePayload.profits_real = Number(profits);
+        if (activePositions !== undefined) updatePayload.active_positions = activePositions;
+        if (demoPositions !== undefined) updatePayload.demo_positions = demoPositions;
+        if (customBots !== undefined) updatePayload.custom_bots = customBots;
+        if (activeBots !== undefined) updatePayload.active_bots = activeBots;
+        if (copiedTraderAllocations !== undefined) updatePayload.copied_allocations = copiedTraderAllocations;
+        if (activeStakingSubscriptions !== undefined) updatePayload.staking_subscriptions = activeStakingSubscriptions;
+        if (supportTickets !== undefined) updatePayload.support_tickets_json = supportTickets;
+        if (isKycVerified !== undefined) updatePayload.is_kyc_verified = isKycVerified;
+        if (phone !== undefined) updatePayload.phone = phone;
+        updatePayload.updated_at = new Date().toISOString();
 
-        if (!rpcErr) {
-          updateExecuted = true;
-          console.log("[update-state] Successfully synchronized state with Supabase using robust bypass RPC!");
-        } else {
-          console.warn("[update-state] system_update_profile_state RPC was not successful:", rpcErr.message);
-        }
-
-        // Step B: Direct Table Columns Update Fallback (Full Payload)
-        if (!updateExecuted) {
-          console.log("[update-state] RPC failed or does not exist. Attempting direct columns update...");
-          const updatePayload: any = {};
-          if (walletBalance !== undefined) updatePayload.wallet_balance = Number(walletBalance);
-          if (demoBalance !== undefined) updatePayload.demo_wallet_balance = Number(demoBalance);
-          if (demoProfits !== undefined) updatePayload.demo_profits = Number(demoProfits);
-          if (investedCapital !== undefined) updatePayload.invested_capital = Number(investedCapital);
-          if (copyTradingAllocated !== undefined) updatePayload.copy_trading_allocated = Number(copyTradingAllocated);
-          if (profits !== undefined) updatePayload.profits_real = Number(profits);
-          if (activePositions !== undefined) updatePayload.active_positions = activePositions;
-          if (demoPositions !== undefined) updatePayload.demo_positions = demoPositions;
-          if (customBots !== undefined) updatePayload.custom_bots = customBots;
-          if (activeBots !== undefined) updatePayload.active_bots = activeBots;
-          if (copiedTraderAllocations !== undefined) updatePayload.copied_allocations = copiedTraderAllocations;
-          if (activeStakingSubscriptions !== undefined) updatePayload.staking_subscriptions = activeStakingSubscriptions;
-          if (supportTickets !== undefined) updatePayload.support_tickets_json = supportTickets;
-          if (isKycVerified !== undefined) updatePayload.is_kyc_verified = isKycVerified;
-          if (phone !== undefined) updatePayload.phone = phone;
-          updatePayload.updated_at = new Date().toISOString();
-
+        try {
           const { error: updErr } = await db.from("profiles").update(updatePayload).eq("email", emailLower);
           if (!updErr) {
             updateExecuted = true;
-            console.log("[update-state] Successfully synchronized full payload directly to profiles table!");
+            console.log("[update-state] Successfully synchronized state directly to profiles table!");
           } else {
-            console.warn("[update-state-fallback] Direct full columns update failed:", updErr.message);
-            if (updErr.message && (updErr.message.includes("schema cache") || updErr.message.includes("column") || updErr.message.includes("could not find"))) {
-              console.log("\n" + "=".repeat(80));
-              console.log("[SUPABASE DIAGNOSTIC SUGGESTION] It looks like the 'profiles' table columns in Supabase are out of sync with your PostgREST cache.");
-              console.log("You can instantly resolve this by opening your Supabase Dashboard SQL Editor and executing:");
-              console.log("\n    NOTIFY pgrst, 'reload schema';\n");
-              console.log("Also make sure you have fully copied and executed the 'supabase_setup.sql' file which contains all required database definitions.");
-              console.log("=".repeat(80) + "\n");
-            }
+            console.log("[update-state] Direct table update did not complete, falling back next...");
+          }
+        } catch (e: any) {
+          console.log("[update-state] Direct columns update fallback warning:", e.message || e);
+        }
+
+        // Step B: Fallback to the Schema Cache Bypass RPC if direct table update didn't work
+        if (!updateExecuted) {
+          console.log("[update-state] Attempting state synchronization via schema-cache bypass RPC...");
+          const { error: rpcErr } = await db.rpc("system_update_profile_state", {
+            secure_token: 'payhero_system_clear_token_vfx',
+            target_email: emailLower,
+            val_wallet_balance: walletBalance !== undefined ? Number(walletBalance) : null,
+            val_demo_wallet_balance: demoBalance !== undefined ? Number(demoBalance) : null,
+            val_demo_profits: demoProfits !== undefined ? Number(demoProfits) : null,
+            val_invested_capital: investedCapital !== undefined ? Number(investedCapital) : null,
+            val_copy_trading_allocated: copyTradingAllocated !== undefined ? Number(copyTradingAllocated) : null,
+            val_profits_real: profits !== undefined ? Number(profits) : null,
+            val_active_positions: activePositions !== undefined ? activePositions : null,
+            val_demo_positions: demoPositions !== undefined ? demoPositions : null,
+            val_custom_bots: customBots !== undefined ? customBots : null,
+            val_active_bots: activeBots !== undefined ? activeBots : null,
+            val_copied_allocations: copiedTraderAllocations !== undefined ? copiedTraderAllocations : null,
+            val_staking_subscriptions: activeStakingSubscriptions !== undefined ? activeStakingSubscriptions : null,
+            val_support_tickets_json: supportTickets !== undefined ? supportTickets : null,
+            val_is_kyc_verified: isKycVerified !== undefined ? isKycVerified : null,
+            val_phone: phone !== undefined ? phone : null
+          });
+
+          if (!rpcErr) {
+            updateExecuted = true;
+            console.log("[update-state] Successfully synchronized state with Supabase using robust bypass RPC!");
+          } else {
+            console.log("[update-state] system_update_profile_state RPC fallback was not successful:", rpcErr.message);
           }
         }
 
@@ -1446,7 +1442,7 @@ Advisor core database running under simulated analytics (System Setup Mode). Sin
     const lastMessage = messages[messages.length - 1];
     
     // Construct rich historical prompt or let chat handler take care of it
-    const formattedPrompt = `You are VexcoinFX Elite's advanced AI Trading Advisor & Chief Market Strategist.
+    const formattedPrompt = `You are NetacoinFX Elite's advanced AI Trading Advisor & Chief Market Strategist.
 Your goal is to provide institutional-grade, highly professional technical analysis, fundamental updates, and capital risk management guides.
 Maintain a crisp, composed, highly authoritative, wall-street advisory tone. Use bold highlights, clear structural sections, concrete entry/exit/stop-loss proposals, and leverage ratios. Always include appropriate risk warnings.
  
@@ -1459,7 +1455,7 @@ ${messages.slice(0, -1).map((m: any) => `${m.role === 'user' ? 'Client' : 'Advis
  
 New request: ${lastMessage.content}
  
-Remember, don't mention standard AI agent disclaimers like "I'm an AI," present yourself directly as the premium VexcoinFX Chief Strategist. Provide beautiful Markdown output.`;
+Remember, don't mention standard AI agent disclaimers like "I'm an AI," present yourself directly as the premium NetacoinFX Chief Strategist. Provide beautiful Markdown output.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
@@ -1491,7 +1487,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`VexcoinFX elite fullstack portal running on http://localhost:${PORT}`);
+    console.log(`NetacoinFX elite fullstack portal running on http://localhost:${PORT}`);
     seedDefaultUsers();
   });
 }

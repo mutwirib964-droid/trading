@@ -49,6 +49,10 @@ export interface Position {
   timestamp: string;
   isDemo?: boolean;
   accountMode?: 'REAL' | 'DEMO';
+  tp?: number;
+  sl?: number;
+  expirySeconds?: number;
+  expiryTimestamp?: number;
 }
 
 export interface Transaction {

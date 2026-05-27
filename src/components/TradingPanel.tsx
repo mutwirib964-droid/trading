@@ -17,6 +17,10 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
   const [leverage, setLeverage] = useState(10);
   const [usdAmount, setUsdAmount] = useState('500');
   
+  const [takeProfitPct, setTakeProfitPct] = useState('');
+  const [stopLossPct, setStopLossPct] = useState('');
+  const [tradeExpiry, setTradeExpiry] = useState('none');
+  
   // Realtime Order Book Bids and Asks simulation
   const [bids, setBids] = useState<{ price: number; size: number }[]>([]);
   const [asks, setAsks] = useState<{ price: number; size: number }[]>([]);
@@ -88,6 +92,28 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
       return;
     }
 
+    const tpVal = takeProfitPct ? parseFloat(takeProfitPct) : undefined;
+    const slVal = stopLossPct ? parseFloat(stopLossPct) : undefined;
+
+    let calculatedTp: number | undefined;
+    let calculatedSl: number | undefined;
+
+    if (tpVal) {
+      if (tradeType === 'BUY') {
+        calculatedTp = Number((priceToUse * (1 + tpVal / (100 * leverage))).toFixed(activeAsset.category === 'forex' ? 4 : 2));
+      } else {
+        calculatedTp = Number((priceToUse * (1 - tpVal / (100 * leverage))).toFixed(activeAsset.category === 'forex' ? 4 : 2));
+      }
+    }
+
+    if (slVal) {
+      if (tradeType === 'BUY') {
+        calculatedSl = Number((priceToUse * (1 - slVal / (100 * leverage))).toFixed(activeAsset.category === 'forex' ? 4 : 2));
+      } else {
+        calculatedSl = Number((priceToUse * (1 + slVal / (100 * leverage))).toFixed(activeAsset.category === 'forex' ? 4 : 2));
+      }
+    }
+
     onTradeExecute({
       assetSymbol: activeAsset.symbol,
       assetName: activeAsset.name,
@@ -95,7 +121,11 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
       entryPrice: priceToUse,
       amount: assetQuantity,
       leverage,
-      margin: totalMargin
+      margin: totalMargin,
+      tp: calculatedTp,
+      sl: calculatedSl,
+      expirySeconds: tradeExpiry === 'none' ? undefined : parseInt(tradeExpiry),
+      expiryTimestamp: tradeExpiry === 'none' ? undefined : Date.now() + parseInt(tradeExpiry) * 1000,
     });
   };
 
@@ -219,6 +249,59 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
             </div>
           </div>
 
+          {/* Optional Risk Parameters and Expiry controls */}
+          <div className="space-y-2.5 pt-2 border-t border-gray-800/85">
+            <span className="text-gray-500 font-mono text-[8.5px] uppercase tracking-wide block">Contract Parameters (Optional)</span>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-gray-500 font-mono text-[8px] uppercase">TAKE PROFIT (%)</label>
+                <div className="relative bg-gray-950 border border-gray-800 rounded py-1 px-2 focus-within:border-emerald-500/30 flex items-center">
+                  <input
+                    type="number"
+                    placeholder="None"
+                    value={takeProfitPct}
+                    onChange={(e) => setTakeProfitPct(e.target.value)}
+                    className="w-full bg-transparent text-white focus:outline-none text-[10px] font-bold font-mono"
+                    min="1"
+                  />
+                  <span className="text-gray-600 font-mono text-[8px] font-bold pl-1">%</span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-gray-500 font-mono text-[8px] uppercase">STOP LOSS (%)</label>
+                <div className="relative bg-gray-950 border border-gray-800 rounded py-1 px-2 focus-within:border-emerald-500/30 flex items-center">
+                  <input
+                    type="number"
+                    placeholder="None"
+                    value={stopLossPct}
+                    onChange={(e) => setStopLossPct(e.target.value)}
+                    className="w-full bg-transparent text-white focus:outline-none text-[10px] font-bold font-mono"
+                    min="1"
+                    max="100"
+                  />
+                  <span className="text-gray-650 font-mono text-[8px] font-bold pl-1">%</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-gray-500 font-mono text-[8px] uppercase font-bold">CONTRACT EXPIRY</label>
+              <select
+                value={tradeExpiry}
+                onChange={(e) => setTradeExpiry(e.target.value)}
+                className="w-full bg-gray-950 border border-gray-800 rounded py-1 px-2 text-white font-mono text-[10px] focus:outline-none focus:border-emerald-500/30 cursor-pointer"
+              >
+                <option value="none">UNLIMITED (MANUAL CLOSE)</option>
+                <option value="30">30 SECONDS</option>
+                <option value="60">1 MINUTE</option>
+                <option value="300">5 MINUTES</option>
+                <option value="900">15 MINUTES</option>
+              </select>
+            </div>
+          </div>
+
           {/* Leverage warning block */}
           {leverage >= 50 && (
             <div className="bg-amber-950/15 border border-amber-900/30 rounded p-2 flex items-start gap-1.5 text-amber-500 text-[9px] leading-relaxed">
@@ -315,7 +398,7 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
             <span className="text-white text-[11px] font-bold font-sans uppercase">Institutional Security Guard</span>
           </div>
           <p className="text-[10px] text-gray-400 leading-relaxed font-sans">
-            VexcoinFX Elite incorporates state-of-the-art cold multi-signature wallets and strict institutional banking policies (including segmented liquidity preservation). All live orders are executed under optimal market parameters.
+            NetacoinFX Elite incorporates state-of-the-art cold multi-signature wallets and strict institutional banking policies (including segmented liquidity preservation). All live orders are executed under optimal market parameters.
           </p>
 
           <div className="space-y-2 font-mono text-[9px] text-gray-500 border-t border-gray-850 pt-2.5">
@@ -336,7 +419,7 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
 
         <div className="bg-[#121826]/40 p-2.5 rounded border border-gray-800/60 flex items-center gap-2 text-gray-500 mt-3 text-[9.5px]">
           <Layers className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-          <span>VexcoinFX clearing network utilizes segmented accounts for customer deposits. Safeguarded by institutional security audits.</span>
+          <span>NetacoinFX clearing network utilizes segmented accounts for customer deposits. Safeguarded by institutional security audits.</span>
         </div>
       </div>
 

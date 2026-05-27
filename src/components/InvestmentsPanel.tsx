@@ -69,7 +69,7 @@ export default function InvestmentsPanel({ user, stakingPlans, onSubscribeStakin
           </div>
           <h2 className="text-white text-base font-bold font-sans tracking-tight">Structured Yield Programs & Margin Staking</h2>
           <p className="text-[10px] text-gray-400 leading-relaxed font-sans">
-            Commit liquidity directly to VexcoinFX institutional swap-clearing pipelines. Staking returns are fully backed by exchange reserves and automatic reserve pools, generating yield every single minute with complete capital immunity guarantees.
+            Commit liquidity directly to NetacoinFX institutional swap-clearing pipelines. Staking returns are fully backed by exchange reserves and automatic reserve pools, generating yield every single minute with complete capital immunity guarantees.
           </p>
         </div>
 

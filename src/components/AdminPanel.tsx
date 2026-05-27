@@ -623,7 +623,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
                 {filteredTransactions.length > 0 ? (
                   filteredTransactions.map((tx) => {
                     const isDeposit = tx.type === 'DEPOSIT';
-                    const txEmail = tx.email || tx.user_email || 'anonymous@vexcoinfx.com';
+                    const txEmail = tx.email || tx.user_email || 'anonymous@netacoinfx.com';
                     return (
                       <tr key={tx.id} className="hover:bg-gray-900/40 border-b border-gray-850/60 transition-all text-gray-350">
                         {/* ID */}

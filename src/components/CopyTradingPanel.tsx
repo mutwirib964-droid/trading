@@ -56,7 +56,7 @@ export default function CopyTradingPanel({ user, copyTraders, onAllocateCopy, on
             Automate Portfolio Allocation with Institutional Syndicates
           </h2>
           <p className="text-[10px] text-gray-400 max-w-2xl leading-relaxed font-sans">
-            Instantly replicate top-performing quant strategies on the VexcoinFX network. Every strategy is delta-neutral monitored, preventing catastrophic drawdown through deep capital protection covenants. No performance fee unless you earn!
+            Instantly replicate top-performing quant strategies on the NetacoinFX network. Every strategy is delta-neutral monitored, preventing catastrophic drawdown through deep capital protection covenants. No performance fee unless you earn!
           </p>
         </div>
 

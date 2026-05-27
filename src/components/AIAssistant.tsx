@@ -26,7 +26,7 @@ export default function AIAssistant({ activeAsset }: AIAssistantProps) {
       setMessages([
         {
           role: 'assistant',
-          content: `### Welcome to VexcoinFX Elite Market Desk
+          content: `### Welcome to NetacoinFX Elite Market Desk
 
 I am your Chief AI Market Strategist. I have mapped real-time liquidity pools and trend alignments for **${activeAsset.symbol}**.
 
