@@ -339,24 +339,65 @@ app.post("/api/user/sync", async (req, res) => {
     }
 
     if (profile && !fallbackToMemory) {
-      // Intelligently merge database values with the instantaneous, write-through in-memory cache (memUser)
-      // This ensures that live trading deductions, positions, and active bots are displayed immediately and don't get reverted by slow database returns.
-      const finalWalletBalance = memUser && memUser.wallet_balance !== undefined ? memUser.wallet_balance : Number(profile.wallet_balance ?? 0);
-      const finalDemoBalance = memUser && memUser.demo_wallet_balance !== undefined ? memUser.demo_wallet_balance : Number(profile.demo_wallet_balance ?? 10000.0);
-      const finalDemoProfits = memUser && memUser.demo_profits !== undefined ? memUser.demo_profits : Number(profile.demo_profits ?? 0);
-      const finalInvestedCapital = memUser && memUser.invested_capital !== undefined ? memUser.invested_capital : Number(profile.invested_capital ?? 0);
-      const finalCopyTrading = memUser && memUser.copy_trading_allocated !== undefined ? memUser.copy_trading_allocated : Number(profile.copy_trading_allocated ?? 0);
-      const finalProfitsReal = memUser && memUser.profits_real !== undefined ? memUser.profits_real : Number(profile.profits_real ?? 0);
+      // Synchronize in-memory fallback user to match database profile immediately,
+      // so subsequent memory access in this container is coherent with Supabase.
+      if (memUser) {
+        memUser.wallet_balance = Number(profile.wallet_balance ?? 0);
+        memUser.demo_wallet_balance = Number(profile.demo_wallet_balance ?? 10000.0);
+        memUser.demo_profits = Number(profile.demo_profits ?? 0);
+        memUser.invested_capital = Number(profile.invested_capital ?? 0);
+        memUser.copy_trading_allocated = Number(profile.copy_trading_allocated ?? 0);
+        memUser.profits_real = Number(profile.profits_real ?? 0);
+        memUser.active_positions = profile.active_positions || [];
+        memUser.demo_positions = profile.demo_positions || [];
+        memUser.custom_bots = profile.custom_bots || [];
+        memUser.active_bots = profile.active_bots || [];
+        memUser.copied_allocations = profile.copied_allocations || {};
+        memUser.staking_subscriptions = profile.staking_subscriptions || [];
+        memUser.support_tickets_json = profile.support_tickets_json || [];
+        memUser.is_kyc_verified = profile.is_kyc_verified || "unverified";
+        memUser.phone = profile.phone || "";
+      } else {
+        memUser = {
+          id: profile.id || userUid,
+          email: emailLower,
+          role: profile.role || (isAdmin ? "admin" : "user"),
+          wallet_balance: Number(profile.wallet_balance ?? 0),
+          total_deposited: Number(profile.total_deposited ?? 0),
+          demo_wallet_balance: Number(profile.demo_wallet_balance ?? 10000.0),
+          demo_profits: Number(profile.demo_profits ?? 0),
+          invested_capital: Number(profile.invested_capital ?? 0),
+          copy_trading_allocated: Number(profile.copy_trading_allocated ?? 0),
+          profits_real: Number(profile.profits_real ?? 0),
+          active_positions: profile.active_positions || [],
+          demo_positions: profile.demo_positions || [],
+          custom_bots: profile.custom_bots || [],
+          active_bots: profile.active_bots || [],
+          copied_allocations: profile.copied_allocations || {},
+          staking_subscriptions: profile.staking_subscriptions || [],
+          support_tickets_json: profile.support_tickets_json || [],
+          is_kyc_verified: profile.is_kyc_verified || "unverified",
+          phone: profile.phone || ""
+        };
+        memoryUsers.push(memUser);
+      }
+
+      const finalWalletBalance = Number(profile.wallet_balance ?? 0);
+      const finalDemoBalance = Number(profile.demo_wallet_balance ?? 10000.0);
+      const finalDemoProfits = Number(profile.demo_profits ?? 0);
+      const finalInvestedCapital = Number(profile.invested_capital ?? 0);
+      const finalCopyTrading = Number(profile.copy_trading_allocated ?? 0);
+      const finalProfitsReal = Number(profile.profits_real ?? 0);
       
-      const finalActivePositions = memUser && memUser.active_positions !== undefined ? memUser.active_positions : (profile.active_positions || []);
-      const finalDemoPositions = memUser && memUser.demo_positions !== undefined ? memUser.demo_positions : (profile.demo_positions || []);
-      const finalCustomBots = memUser && memUser.custom_bots !== undefined ? memUser.custom_bots : (profile.custom_bots || []);
-      const finalActiveBots = memUser && memUser.active_bots !== undefined ? memUser.active_bots : (profile.active_bots || []);
-      const finalCopiedAlloc = memUser && memUser.copied_allocations !== undefined ? memUser.copied_allocations : (profile.copied_allocations || {});
-      const finalStaking = memUser && memUser.staking_subscriptions !== undefined ? memUser.staking_subscriptions : (profile.staking_subscriptions || []);
-      const finalSupportTickets = memUser && memUser.support_tickets_json !== undefined ? memUser.support_tickets_json : (profile.support_tickets_json || []);
-      const finalKyc = memUser && memUser.is_kyc_verified !== undefined ? memUser.is_kyc_verified : (profile.is_kyc_verified || "unverified");
-      const finalPhone = memUser && memUser.phone !== undefined ? memUser.phone : (profile.phone || "");
+      const finalActivePositions = (profile.active_positions || []);
+      const finalDemoPositions = (profile.demo_positions || []);
+      const finalCustomBots = (profile.custom_bots || []);
+      const finalActiveBots = (profile.active_bots || []);
+      const finalCopiedAlloc = (profile.copied_allocations || {});
+      const finalStaking = (profile.staking_subscriptions || []);
+      const finalSupportTickets = (profile.support_tickets_json || []);
+      const finalKyc = (profile.is_kyc_verified || "unverified");
+      const finalPhone = (profile.phone || "");
 
       return res.json({
         id: profile.id || userUid,
@@ -669,18 +710,8 @@ app.get("/api/payhero/check-status", async (req, res) => {
     }
 
     console.log(`Polling status checking for reference: ${reference}`);
-    const tx = memoryTransactions.find(t => (t as any).reference === reference);
     
-    if (tx) {
-      return res.json({
-        success: true,
-        status: tx.status,
-        amount: tx.amount,
-        asset: tx.asset
-      });
-    }
-
-    // Checking in Supabase db as well
+    // Always check Supabase first to get real-time source-of-truth status
     const db = getSupabase();
     if (db) {
       const { data: profileTxs } = await db.from("transactions")
@@ -692,6 +723,17 @@ app.get("/api/payhero/check-status", async (req, res) => {
       const profileTx = profileTxs?.[0];
 
       if (profileTx) {
+        console.log(`[Status Poll] Found transaction status "${profileTx.status}" in database for reference: ${reference}`);
+        
+        // Sync local memory status as well if present
+        const txIndex = memoryTransactions.findIndex(t => (t as any).reference === reference);
+        if (txIndex !== -1) {
+          memoryTransactions[txIndex].status = profileTx.status;
+          if (profileTx.status === "COMPLETED") {
+            memoryTransactions[txIndex].asset = profileTx.asset;
+          }
+        }
+        
         return res.json({
           success: true,
           status: profileTx.status,
@@ -699,6 +741,17 @@ app.get("/api/payhero/check-status", async (req, res) => {
           asset: profileTx.asset
         });
       }
+    }
+
+    // Fallback checking in memory fallback store if Supabase is offline or returned no results
+    const tx = memoryTransactions.find(t => (t as any).reference === reference);
+    if (tx) {
+      return res.json({
+        success: true,
+        status: tx.status,
+        amount: tx.amount,
+        asset: tx.asset
+      });
     }
 
     return res.json({ success: true, status: "PENDING" });

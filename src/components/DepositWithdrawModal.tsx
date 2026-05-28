@@ -63,16 +63,18 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         const resp = await fetch(getApiUrl(`/api/payhero/check-status?reference=${encodeURIComponent(stkReference)}`));
         if (resp.ok) {
           const data = await resp.json();
-          if (data.status === 'COMPLETED') {
+          const cleanStatus = String(data.status || "PENDING").toUpperCase().trim();
+          
+          if (cleanStatus === 'COMPLETED' || cleanStatus === 'SUCCESS' || cleanStatus === 'SUCCESSFUL') {
             setStkStatus('COMPLETED');
             
-            // Credit real balance and log transaction on client
+            // Credit real balance and log transaction on client immediately
             onModifyBalance('DEPOSIT', stkUsdValue, {
               asset: `M-Pesa (Code: Cleared)`,
               address: `STK Ref: ${stkReference.slice(-10)}`,
               phone: stkPhoneValue
             });
-          } else if (data.status === 'FAILED') {
+          } else if (cleanStatus === 'FAILED' || cleanStatus === 'CANCELLED') {
             setStkStatus('FAILED');
             addToast("M-Pesa transaction was Cancelled or Failed.", "ERROR");
           }
