@@ -1655,9 +1655,12 @@ export default function App() {
       <header className="border-b border-gray-950 bg-[#070b13]/90 backdrop-blur sticky top-0 z-45 px-2 sm:px-3.5 py-2 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1.5 sm:gap-2">
-            <div className="w-6.5 h-6.5 rounded bg-emerald-500 flex items-center justify-center font-display font-black text-black text-xs select-none shadow-[0_0_12px_rgba(16,185,129,0.2)] shrink-0">
-              N
-            </div>
+            <img 
+              src="/favicon.svg" 
+              alt="NetacoinFX Logo" 
+              className="w-7 h-7 select-none object-contain shadow-[0_0_12px_rgba(16,185,129,0.2)] shrink-0" 
+              referrerPolicy="no-referrer"
+            />
             <div className="hidden sm:block">
               <h1 className="text-white text-xs font-display font-black tracking-widest leading-none uppercase">
                 NETACOIN<span className="text-emerald-400">FX</span>
@@ -2351,12 +2354,18 @@ export default function App() {
             </button>
 
             <form onSubmit={handleAuthSubmit} className="space-y-4.5">
-              <div className="text-center space-y-1 bg-gradient-to-r from-gray-950 to-gray-900 py-4 rounded border border-gray-950 mb-1 select-none">
+              <div className="text-center space-y-2.5 bg-gradient-to-r from-gray-950 to-gray-900 py-4.5 rounded border border-gray-950 mb-1 select-none flex flex-col items-center justify-center">
+                <img 
+                  src="/favicon.svg" 
+                  alt="NetacoinFX Logo" 
+                  className="w-10 h-10 select-none object-contain shadow-[0_0_16px_rgba(16,185,129,0.35)]" 
+                  referrerPolicy="no-referrer"
+                />
                 <span className="text-[8px] font-mono text-emerald-400 font-bold uppercase tracking-widest flex items-center justify-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> SECURE TRADING WEBPORTAL
                 </span>
-                <h3 className="text-white text-base font-display font-black uppercase tracking-widest">
-                  NETACOIN<span className="text-emerald-400">FX</span> <span className="text-gray-400 font-mono font-medium text-[11px] block mt-0.5 tracking-wider">Trading Account Access</span>
+                <h3 className="text-white text-base font-display font-black uppercase tracking-widest leading-none">
+                  NETACOIN<span className="text-emerald-400">FX</span> <span className="text-gray-400 font-mono font-medium text-[11px] block mt-1 tracking-wider leading-none">Trading Account Access</span>
                 </h3>
               </div>
 

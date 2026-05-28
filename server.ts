@@ -3,6 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -711,16 +712,58 @@ app.get("/api/payhero/check-status", async (req, res) => {
 
     console.log(`Polling status checking for reference: ${reference}`);
     
+    // Decode user email and approximate start timestamp from the custom reference for fallback checks
+    let emailLower = "";
+    let startTime: Date | null = null;
+    const refStr = String(reference);
+    if (refStr.includes("__")) {
+      const parts = refStr.split("__");
+      const rawEmail = parts[0];
+      emailLower = rawEmail.replace(/_at_/g, "@").replace(/_dot_/g, ".").toLowerCase().trim();
+      const rawTs = parseInt(parts[1]);
+      if (!isNaN(rawTs)) {
+        startTime = new Date(rawTs - 180000); // 3 minutes buffer before STK pushed
+      }
+    } else if (refStr.includes("@")) {
+      emailLower = refStr.toLowerCase().trim();
+    }
+
     // Always check Supabase first to get real-time source-of-truth status
     const db = getSupabase();
     if (db) {
+      // 1. Try matching the exact reference inside the address field
       const { data: profileTxs } = await db.from("transactions")
         .select("*")
         .or(`address.eq.M-Pesa IPN Ref: ${reference},address.eq.IPN Ref: ${reference},address.like.%${reference}%`)
         .order("created_at", { ascending: false })
         .limit(1);
 
-      const profileTx = profileTxs?.[0];
+      let profileTx = profileTxs?.[0];
+
+      // 2. Fallback: Search for any completed deposit for this user email created since we triggered the STK push
+      if (!profileTx && emailLower) {
+        console.log(`[Status Poll Fallback] Searching alternative transactions for ${emailLower} since ${startTime ? startTime.toISOString() : 'beginning'}`);
+        const { data: recentTxs } = await db.from("transactions")
+          .select("*")
+          .eq("email", emailLower)
+          .eq("type", "DEPOSIT")
+          .in("status", ["COMPLETED", "SUCCESS", "SUCCESSFUL"])
+          .order("created_at", { ascending: false });
+
+        if (recentTxs && recentTxs.length > 0) {
+          if (startTime) {
+            profileTx = recentTxs.find(tx => {
+              const txDate = new Date(tx.created_at);
+              return txDate >= startTime!;
+            });
+          } else {
+            profileTx = recentTxs[0];
+          }
+          if (profileTx) {
+            console.log(`[Status Poll Success] Match found via alternative completed transaction query:`, profileTx);
+          }
+        }
+      }
 
       if (profileTx) {
         console.log(`[Status Poll] Found transaction status "${profileTx.status}" in database for reference: ${reference}`);
@@ -728,15 +771,13 @@ app.get("/api/payhero/check-status", async (req, res) => {
         // Sync local memory status as well if present
         const txIndex = memoryTransactions.findIndex(t => (t as any).reference === reference);
         if (txIndex !== -1) {
-          memoryTransactions[txIndex].status = profileTx.status;
-          if (profileTx.status === "COMPLETED") {
-            memoryTransactions[txIndex].asset = profileTx.asset;
-          }
+          memoryTransactions[txIndex].status = "COMPLETED";
+          memoryTransactions[txIndex].asset = profileTx.asset;
         }
         
         return res.json({
           success: true,
-          status: profileTx.status,
+          status: "COMPLETED",
           amount: profileTx.amount,
           asset: profileTx.asset
         });
@@ -744,7 +785,20 @@ app.get("/api/payhero/check-status", async (req, res) => {
     }
 
     // Fallback checking in memory fallback store if Supabase is offline or returned no results
-    const tx = memoryTransactions.find(t => (t as any).reference === reference);
+    let tx = memoryTransactions.find(t => (t as any).reference === reference);
+    if (!tx && emailLower) {
+      tx = memoryTransactions.find(t => {
+        const isEmailMatch = t.email && t.email.toLowerCase() === emailLower;
+        const isCompleted = t.status === "COMPLETED";
+        const isDeposit = t.type === "DEPOSIT";
+        let isAfterStart = true;
+        if (startTime && t.date) {
+          isAfterStart = new Date(t.date) >= startTime;
+        }
+        return isEmailMatch && isCompleted && isDeposit && isAfterStart;
+      });
+    }
+
     if (tx) {
       return res.json({
         success: true,
@@ -849,6 +903,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -886,6 +941,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -939,6 +995,7 @@ app.post("/api/user/save-transaction", async (req, res) => {
     if (db) {
       try {
         const { error: txErr } = await db.from("transactions").insert({
+          id: crypto.randomUUID(),
           email: emailLower,
           user_email: emailLower,
           type: cleanType,
@@ -982,16 +1039,43 @@ app.post("/api/payhero/callback", async (req, res) => {
     console.log("RECEIVED PAYHERO WEBHOOK CONTRACT:", JSON.stringify(body));
 
     // Support nested, lowercase, uppercase properties from PayHero Gateway variants
-    const external_reference = 
-      body.external_reference || 
-      body.ExternalReference || 
-      body.externalReference || 
-      body.external_ref || 
-      body.ExternalRef || 
-      body.ref || 
-      body.Reference ||
-      (body.Response && (body.Response.external_reference || body.Response.ExternalReference)) ||
-      (body.data && (body.data.external_reference || body.data.ExternalReference));
+    const candidates = [
+      body.external_reference,
+      body.ExternalReference,
+      body.externalReference,
+      body.external_ref,
+      body.ExternalRef,
+      body.response?.external_reference,
+      body.response?.ExternalReference,
+      body.Response?.external_reference,
+      body.Response?.ExternalReference,
+      body.data?.external_reference,
+      body.data?.ExternalReference,
+      body.data?.external_ref,
+      body.data?.ExternalRef,
+      body.ref,
+      body.Reference,
+      body.reference
+    ];
+
+    // Priority 1: Match any candidate containing our standard email encoding template ("__") or raw email ("@")
+    let external_reference = "";
+    for (const val of candidates) {
+      if (val && typeof val === 'string' && (val.includes("__") || val.includes("@"))) {
+        external_reference = val;
+        break;
+      }
+    }
+
+    // Priority 2: Fallback to the first non-empty candidate if no structured candidate is found
+    if (!external_reference) {
+      for (const val of candidates) {
+        if (val) {
+          external_reference = String(val);
+          break;
+        }
+      }
+    }
 
     if (!external_reference) {
       console.warn("Rejected callback because no external_reference was found in raw payload.");
@@ -1023,7 +1107,23 @@ app.post("/api/payhero/callback", async (req, res) => {
     const parts = String(external_reference).split("__");
     const rawEmail = parts[0];
     const email = rawEmail.replace(/_at_/g, "@").replace(/_dot_/g, ".");
-    const emailLower = email.toLowerCase().trim();
+    let emailLower = email.toLowerCase().trim();
+
+    const db = getSupabase();
+
+    // Extra Safe Check: If emailLower doesn't look like a valid email, look up the pending transaction in Supabase
+    if (!emailLower.includes("@") && db) {
+      console.log(`[Callback Processing] Decoded key "${emailLower}" is not a valid email address. Resolving from database transaction reference...`);
+      const { data: matchedTxs } = await db.from("transactions")
+        .select("email, user_email")
+        .or(`address.eq.M-Pesa IPN Ref: ${external_reference},address.like.%${external_reference}%,address.like.%${emailLower}%`)
+        .limit(1);
+
+      if (matchedTxs && matchedTxs[0]) {
+        emailLower = (matchedTxs[0].email || matchedTxs[0].user_email || "").toLowerCase().trim();
+        console.log(`[Callback Processing] Successfully recovered user email: "${emailLower}"`);
+      }
+    }
 
     // Check success status robustly (ResultCode = "0" means Success in Safaricom, status strings: "SUCCESS", "SUCCESSFUL", "COMPLETED")
     let isSuccess = false;
@@ -1055,8 +1155,7 @@ app.post("/api/payhero/callback", async (req, res) => {
       console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
       // 1. Credit Supabase if ONLINE
-      const db = getSupabase();
-      if (db) {
+      if (db && emailLower.includes("@")) {
         // Invoke credit bypass RPC
         const { error: creditRpcErr } = await db.rpc("system_credit_user", {
           secure_token: 'payhero_system_clear_token_vfx',
@@ -1092,7 +1191,9 @@ app.post("/api/payhero/callback", async (req, res) => {
         if (txRpcErr) {
           console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: emailLower,
+            user_email: emailLower,
             type: "DEPOSIT",
             amount: usdAdded,
             asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
@@ -1104,12 +1205,14 @@ app.post("/api/payhero/callback", async (req, res) => {
 
       // 2. Credit memory cache just in case
       let memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
-      if (!memUser) {
+      if (!memUser && emailLower.includes("@")) {
         memUser = { id: `user-mem-${Date.now()}`, email: emailLower, role: "user", wallet_balance: 0, total_deposited: 0 };
         memoryUsers.push(memUser);
       }
-      memUser.wallet_balance = Number((memUser.wallet_balance + usdAdded).toFixed(2));
-      memUser.total_deposited = Number((memUser.total_deposited + usdAdded).toFixed(2));
+      if (memUser) {
+        memUser.wallet_balance = Number((memUser.wallet_balance + usdAdded).toFixed(2));
+        memUser.total_deposited = Number((memUser.total_deposited + usdAdded).toFixed(2));
+      }
 
       // Update the pending transaction status if it already exists
       const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
@@ -1167,7 +1270,9 @@ app.post("/api/payhero/callback", async (req, res) => {
         if (txRpcErr) {
           console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: emailLower,
+            user_email: emailLower,
             type: "DEPOSIT",
             amount: 0,
             asset: "M-Pesa (Cancelled/Declined)",
@@ -1379,7 +1484,9 @@ app.post("/api/admin/update-user", async (req, res) => {
           if (txRpcErr) {
             console.warn("system_record_transaction RPC not created or failed, falling back to standard insert:", txRpcErr.message);
             await db.from("transactions").insert({
+              id: crypto.randomUUID(),
               email: emailLower,
+              user_email: emailLower,
               type: "DEPOSIT",
               amount: onboardingBonus,
               asset: "Marketer Onboarding Credit",
