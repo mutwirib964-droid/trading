@@ -3,7 +3,6 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
-import crypto from "crypto";
 
 dotenv.config();
 
@@ -903,7 +902,6 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
-            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -941,7 +939,6 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
-            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -995,7 +992,6 @@ app.post("/api/user/save-transaction", async (req, res) => {
     if (db) {
       try {
         const { error: txErr } = await db.from("transactions").insert({
-          id: crypto.randomUUID(),
           email: emailLower,
           user_email: emailLower,
           type: cleanType,
@@ -1191,7 +1187,6 @@ app.post("/api/payhero/callback", async (req, res) => {
         if (txRpcErr) {
           console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
           await db.from("transactions").insert({
-            id: crypto.randomUUID(),
             email: emailLower,
             user_email: emailLower,
             type: "DEPOSIT",
@@ -1270,9 +1265,7 @@ app.post("/api/payhero/callback", async (req, res) => {
         if (txRpcErr) {
           console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
           await db.from("transactions").insert({
-            id: crypto.randomUUID(),
             email: emailLower,
-            user_email: emailLower,
             type: "DEPOSIT",
             amount: 0,
             asset: "M-Pesa (Cancelled/Declined)",
@@ -1484,9 +1477,7 @@ app.post("/api/admin/update-user", async (req, res) => {
           if (txRpcErr) {
             console.warn("system_record_transaction RPC not created or failed, falling back to standard insert:", txRpcErr.message);
             await db.from("transactions").insert({
-              id: crypto.randomUUID(),
               email: emailLower,
-              user_email: emailLower,
               type: "DEPOSIT",
               amount: onboardingBonus,
               asset: "Marketer Onboarding Credit",
