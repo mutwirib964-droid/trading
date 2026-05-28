@@ -12,6 +12,17 @@ const PORT = 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Enable robust CORS middleware to allow queries and preflights from static deploys (like Netlify)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Origin, Accept");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // Normalize incoming URLs from Netlify Functions redirects (e.g., /.netlify/functions/api/user/sync -> /api/user/sync)
 app.use((req, res, next) => {
   if (req.url && req.url.startsWith('/.netlify/functions/api')) {
@@ -645,7 +656,7 @@ function formatMpesaPhone(p: string): string {
 
 const getPayheroConfig = () => {
   return {
-    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || "",
+    basicAuth: process.env.PAYHERO_API_BASIC_AUTH || process.env.PAYHERO_API_KEY || "",
     channelId: process.env.PAYHERO_CHANNEL_ID || "4575"
   };
 };
@@ -730,7 +741,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
     // The webhook callback MUST always route to this active server container backend, NOT the static Netlify frontend referer
     const host = req.get("x-forwarded-host") || req.get("host") || "ais-dev-74szm3io5a7byanitj4v3c-209420553255.europe-west2.run.app";
     const protocol = req.get("x-forwarded-proto") || "https";
-    const callbackUrl = `${protocol}://${host}/api/payhero/callback`;
+    const callbackUrl = process.env.PAYHERO_CALLBACK_URL || `${protocol}://${host}/api/payhero/callback`;
 
     console.log(`Sending STK push to Payhero. Recipient: ${cleanedPhone}, Value: ${mpesaKES} KES ($${amount_usd} USD), Callback: ${callbackUrl}`);
 
