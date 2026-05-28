@@ -10,6 +10,7 @@ export const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Normalize incoming URLs from Netlify Functions redirects (e.g., /.netlify/functions/api/user/sync -> /api/user/sync)
 app.use((req, res, next) => {
@@ -726,7 +727,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
     // Encode user email state in the transaction reference key (Stateless retrieval)
     const externalRef = `${email.replace(/@/g, "_at_").replace(/\./g, "_dot_")}__${Date.now()}`;
 
-    // Dynamically retrieve URL from headers to always match active domain (dev, pre, or production)
+    // The webhook callback MUST always route to this active server container backend, NOT the static Netlify frontend referer
     const host = req.get("x-forwarded-host") || req.get("host") || "ais-dev-74szm3io5a7byanitj4v3c-209420553255.europe-west2.run.app";
     const protocol = req.get("x-forwarded-proto") || "https";
     const callbackUrl = `${protocol}://${host}/api/payhero/callback`;
@@ -963,11 +964,23 @@ app.post("/api/payhero/callback", async (req, res) => {
     // Check success status robustly (ResultCode = "0" means Success in Safaricom, status strings: "SUCCESS", "SUCCESSFUL", "COMPLETED")
     let isSuccess = false;
     const statusStr = String(statusVal || "").toUpperCase().trim();
-    if (statusStr === "SUCCESS" || statusStr === "SUCCESSFUL" || statusStr === "COMPLETED" || body.success === true || body.success === "true") {
+    if (
+      statusStr === "SUCCESS" || 
+      statusStr === "SUCCESSFUL" || 
+      statusStr === "COMPLETED" || 
+      body.success === true || 
+      body.success === "true" ||
+      body.Success === true ||
+      body.Success === "true" ||
+      String(body.ResultCode) === "0" ||
+      String(body.result_code) === "0" ||
+      (body.Response && String(body.Response.ResultCode) === "0") ||
+      (body.data && String(body.data.ResultCode) === "0")
+    ) {
       isSuccess = true;
     }
     // Explicitly check for Safaricom error result codes if provided
-    if (body.ResultCode !== undefined && String(body.ResultCode) !== "0") {
+    if (body.ResultCode !== undefined && String(body.ResultCode) !== "0" && String(body.ResultCode) !== "") {
       isSuccess = false;
     }
 
@@ -1060,6 +1073,18 @@ app.post("/api/payhero/callback", async (req, res) => {
       if (txIndex !== -1) {
         memoryTransactions[txIndex].status = "FAILED";
         memoryTransactions[txIndex].asset = "M-Pesa Mobile Push (Failed)";
+      } else {
+        memoryTransactions.push({
+          id: `tx-fin-${Date.now()}`,
+          email: emailLower,
+          type: "DEPOSIT",
+          amount: 0,
+          asset: "M-Pesa (Cancelled/Declined)",
+          address: `IPN Ref: ${external_reference}`,
+          date: new Date().toISOString(),
+          status: "FAILED",
+          reference: external_reference
+        } as any);
       }
       
       const db = getSupabase();

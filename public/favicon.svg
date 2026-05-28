@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Sleek deep emerald to mint green gradient -->
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#047857" />
+      <stop offset="50%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+
+    <!-- Electric mint to glowing cyan gradient for the active 45-degree diagonal -->
+    <linearGradient id="secondaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+
+    <!-- Tech indicator circle gradient -->
+    <linearGradient id="indicatorGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Sleek metallic dark theme rounded capsule background -->
+  <rect width="512" height="512" rx="128" fill="#040609" />
+  
+  <!-- Outer subtle tech-scanning perimeter frame with high elegance -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="none" stroke="url(#indicatorGrad)" stroke-width="3" stroke-opacity="0.12" />
+  
+  <!-- Symmetrical, highly accurate institutional "N" logo structure -->
+  <!-- Left Pillar: rounded vertical pillar with gradient color -->
+  <path d="M 110 145 C 110 128 123 115 140 115 H 150 C 167 115 180 128 180 145 V 367 C 180 384 167 397 150 397 H 140 C 123 397 110 384 110 367 Z" fill="url(#primaryGrad)" />
+  
+  <!-- Right Pillar: rounded vertical pillar with gradient color -->
+  <path d="M 332 145 C 332 128 345 115 362 115 H 372 C 389 115 402 128 402 145 V 367 C 402 384 389 397 372 397 H 362 C 345 397 332 384 332 367 Z" fill="url(#primaryGrad)" />
+  
+  <!-- Slanted Bridge (45-degree alignment, overlapping seamlessly inside vertical bounds) -->
+  <path d="M 110 145 L 180 145 L 402 367 L 332 367 Z" fill="url(#secondaryGrad)" opacity="0.95" />
+  
+  <!-- Glowing focus spot to represent high-execution blockchain terminal activity -->
+  <circle cx="367" cy="145" r="16" fill="url(#indicatorGrad)" opacity="0.85" />
+</svg>
