@@ -1638,9 +1638,14 @@ export default function App() {
 
   const activeUserContext: User = {
     ...user,
-    walletBalance: user.accountMode === 'DEMO' ? (user.demoBalance ?? 10000) : user.walletBalance,
-    activePositions: getCalculatedPositions(user.accountMode === 'DEMO' ? (user.demoPositions ?? []) : user.activePositions),
-    profits: user.accountMode === 'DEMO' ? (user.demoProfits ?? 0) : user.profits
+    walletBalance: Number(user.accountMode === 'DEMO' ? (user.demoBalance ?? 10000) : (user.walletBalance ?? 0)),
+    demoBalance: Number(user.demoBalance ?? 10000),
+    demoProfits: Number(user.demoProfits ?? 0),
+    investedCapital: Number(user.investedCapital ?? 0),
+    copyTradingAllocated: Number(user.copyTradingAllocated ?? 0),
+    profits: Number(user.accountMode === 'DEMO' ? (user.demoProfits ?? 0) : (user.profits ?? 0)),
+    activePositions: getCalculatedPositions(user.accountMode === 'DEMO' ? (user.demoPositions ?? []) : (user.activePositions ?? [])),
+    demoPositions: user.demoPositions ?? [],
   };
 
   return (
@@ -1730,13 +1735,6 @@ export default function App() {
                     className="bg-emerald-500 hover:bg-emerald-400 text-black px-1.5 sm:px-2 py-0.5 rounded text-[8.5px] sm:text-[9.5px] font-bold transition-all select-none cursor-pointer"
                   >
                     Deposit
-                  </button>
-                  <button
-                    onClick={() => setShowResetModal(true)}
-                    className="bg-rose-950/45 border border-rose-800/65 hover:bg-rose-900/80 text-rose-400 hover:text-rose-200 px-1.5 sm:px-2 py-0.5 rounded text-[8.5px] sm:text-[9.5px] font-bold transition-all select-none cursor-pointer whitespace-nowrap"
-                    title="Clear active positions, bots, and expert-copying allocations"
-                  >
-                    Reset Trades
                   </button>
                   <button
                     onClick={handleSignOut}

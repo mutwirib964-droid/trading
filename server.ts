@@ -706,7 +706,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
     const { basicAuth, channelId } = getPayheroConfig();
 
     const cleanedPhone = formatMpesaPhone(phone);
-    const mpesaKES = Math.round(Number(amount_usd) * 130);
+    const mpesaKES = Math.round(Number(amount_usd) * 1);
 
     // Persist phone to Supabase profile
     try {
@@ -973,7 +973,7 @@ app.post("/api/payhero/callback", async (req, res) => {
 
     if (isSuccess) {
       const kesVal = parseFloat(amount) || 0;
-      const usdAdded = Number((kesVal / 130).toFixed(2)) || 17;
+      const usdAdded = Number((kesVal / 1).toFixed(2)) || 1;
 
       console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
@@ -1125,7 +1125,7 @@ app.post("/api/payhero/sandbox-trigger", async (req, res) => {
     const callbackPayload = {
       status: status || "SUCCESSFUL",
       external_reference: refToUse,
-      amount: Math.round(Number(amount_usd) * 130),
+      amount: Math.round(Number(amount_usd) * 1),
       mpesa_code: fakeMpesaCode,
       success: status === "FAILED" ? false : true
     };

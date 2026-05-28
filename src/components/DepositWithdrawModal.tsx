@@ -27,7 +27,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [mpesaPhone, setMpesaPhone] = useState(() => {
     return user.phone || localStorage.getItem('vfx_saved_phone') || '';
   });
-  const [mpesaAmt, setMpesaAmt] = useState('17');
+  const [mpesaAmt, setMpesaAmt] = useState('1');
   const [cryptoAsset, setCryptoAsset] = useState('USDT (TRC20)');
   const [cryptoAddress, setCryptoAddress] = useState('TXuGgY17pZpqyY7scT21Pz88DkUnm9vBKa');
   const [cryptoAmt, setCryptoAmt] = useState('30');
@@ -46,7 +46,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [copied, setCopied] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
 
-  const KES_RATE = 130;
+  const KES_RATE = 1;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(cryptoAddress);
@@ -125,8 +125,8 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const handleMpesaDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
     const usd = parseFloat(mpesaAmt) || 0;
-    if (usd < 17) {
-      addToast("Minimum M-Pesa deposit is $17 (KES 2,210)", "ERROR");
+    if (usd < 1) {
+      addToast(`Minimum M-Pesa deposit is $1 (KES ${1 * KES_RATE})`, "ERROR");
       return;
     }
     if (user.accountMode === 'DEMO') {
@@ -305,7 +305,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   </div>
                   <div className="flex justify-between">
                     <span>M-Pesa Amount:</span>
-                    <span className="text-white font-bold">KES {(stkUsdValue * 130).toLocaleString()}</span>
+                    <span className="text-white font-bold">KES {(stkUsdValue * KES_RATE).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Ledger Value:</span>
@@ -459,7 +459,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     <form onSubmit={handleMpesaDeposit} className="space-y-4 text-left font-mono text-xs">
                       <div className="bg-emerald-950/20 border border-emerald-500/10 p-3 rounded-lg text-xxs text-emerald-400 leading-normal">
                         <span className="font-bold block mb-1">PAYHERO M-PESA INSTANT PORTAL</span>
-                        Initiate an instant STK push to your Safaricom mobile phone. Minimum deposit limit is <b className="text-white">$17 (KES 2,210)</b>.
+                        Initiate an instant STK push to your Safaricom mobile phone. Minimum deposit limit is <b className="text-white">$1 (KES {1 * KES_RATE})</b>.
                       </div>
 
                       <div className="space-y-1.5">
@@ -478,7 +478,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[9px]">
                           <span className="text-gray-500 uppercase font-bold">DEPOSIT QUANTITY (USD)</span>
-                          <span className="text-emerald-400 font-bold">Min: $17</span>
+                          <span className="text-emerald-400 font-bold">Min: $1</span>
                         </div>
                         <div className="relative flex items-center bg-gray-950 border border-gray-800 rounded-lg">
                           <input
@@ -486,7 +486,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                             value={mpesaAmt}
                             onChange={(e) => setMpesaAmt(e.target.value)}
                             className="w-full bg-transparent border-none text-white py-2 pl-3 pr-10 focus:outline-none text-xs"
-                            min="17"
+                            min="1"
                             disabled={paymentLoading}
                             required
                           />

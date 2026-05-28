@@ -20,6 +20,7 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
   const [takeProfitPct, setTakeProfitPct] = useState('');
   const [stopLossPct, setStopLossPct] = useState('');
   const [tradeExpiry, setTradeExpiry] = useState('none');
+  const [isExecuting, setIsExecuting] = useState(false);
   
   // Realtime Order Book Bids and Asks simulation
   const [bids, setBids] = useState<{ price: number; size: number }[]>([]);
@@ -80,7 +81,12 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
 
   const handlePlaceOrder = (e: React.FormEvent) => {
     e.preventDefault();
-    if (totalMargin <= 0) return;
+    if (totalMargin <= 0 || isExecuting) return;
+
+    setIsExecuting(true);
+    setTimeout(() => {
+      setIsExecuting(false);
+    }, 1500); // 1.5s lock to prevent duplicate orders
 
     if (user.accountMode === 'REAL' && totalMargin < 10) {
       addToast("The minimum manual trade stake is $10 for Real accounts.", "ERROR");
@@ -324,11 +330,12 @@ export default function TradingPanel({ activeAsset, user, onTradeExecute, onClos
 
           <button
             type="submit"
-            className={`w-full py-1.5 rounded text-[10.5px] font-extrabold text-[#0b0f19] tracking-wide uppercase shadow-md transition-all duration-200 cursor-pointer ${
+            disabled={isExecuting}
+            className={`w-full py-1.5 rounded text-[10.5px] font-extrabold text-[#0b0f19] tracking-wide uppercase shadow-md transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
               tradeType === 'BUY' ? 'bg-emerald-500 hover:bg-emerald-400 shadow-emerald-950/20' : 'bg-rose-500 hover:bg-rose-400 text-white'
             }`}
           >
-            EXECUTE {tradeType === 'BUY' ? 'LONG' : 'SHORT'} ORDER
+            {isExecuting ? 'EXECUTING ORDER...' : `EXECUTE ${tradeType === 'BUY' ? 'LONG' : 'SHORT'} ORDER`}
           </button>
         </form>
       </div>

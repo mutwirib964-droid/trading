@@ -10,10 +10,14 @@ interface PortfolioSummaryProps {
 
 export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }: PortfolioSummaryProps) {
   const isDemo = user.accountMode === 'DEMO';
+  const walletBal = Number(user.walletBalance ?? 0);
+  const investedCap = Number(user.investedCapital ?? 0);
+  const copyTradingAlloc = Number(user.copyTradingAllocated ?? 0);
+  const demoBal = Number(user.demoBalance ?? 10000);
   const totalWealth = isDemo 
-    ? (user.demoBalance ?? 10000)
-    : user.walletBalance + user.investedCapital + user.copyTradingAllocated;
-  const netEarnings = isDemo ? (user.demoProfits ?? 0) : user.profits;
+    ? demoBal
+    : walletBal + investedCap + copyTradingAlloc;
+  const netEarnings = isDemo ? Number(user.demoProfits ?? 0) : Number(user.profits ?? 0);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -30,7 +34,7 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
 
         <div className="space-y-0.5">
           <h2 className="text-white text-xl md:text-2xl font-bold font-mono tracking-tight">
-            ${(isDemo ? (user.demoBalance ?? 10000) : user.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${(isDemo ? demoBal : walletBal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </h2>
           <div className="flex items-center gap-1 text-[9px] text-gray-500 font-mono uppercase tracking-wider">
             <span>{"TRADING BALANCE"}</span>
@@ -78,19 +82,19 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             {/* ProgressBar Row */}
             <div className="w-full bg-gray-950 h-2 rounded-full overflow-hidden flex">
               <div 
-                style={{ width: `${isDemo ? 100 : (user.walletBalance / (totalWealth || 1)) * 100}%` }} 
+                style={{ width: `${isDemo ? 100 : (walletBal / (totalWealth || 1)) * 100}%` }} 
                 className={isDemo ? "bg-amber-500 h-full" : "bg-emerald-500 h-full"}
                 title="Wallet Balance"
               />
               {!isDemo && (
                 <>
                   <div 
-                    style={{ width: `${(user.copyTradingAllocated / (totalWealth || 1)) * 100}%` }} 
+                    style={{ width: `${(copyTradingAlloc / (totalWealth || 1)) * 100}%` }} 
                     className="bg-blue-400 h-full"
                     title="Copy Trading"
                   />
                   <div 
-                    style={{ width: `${(user.investedCapital / (totalWealth || 1)) * 100}%` }} 
+                    style={{ width: `${(investedCap / (totalWealth || 1)) * 100}%` }} 
                     className="bg-amber-400 h-full"
                     title="Invested Yields"
                   />
@@ -101,17 +105,17 @@ export default function PortfolioSummary({ user, onOpenDeposit, onOpenWithdraw }
             <div className="grid grid-cols-3 gap-1.5 text-[8.5px] text-gray-500 mt-1">
               <div className="flex items-center gap-1 truncate col-span-1">
                 <div className={`w-1.5 h-1.5 rounded shrink-0 ${isDemo ? "bg-amber-500" : "bg-emerald-500"}`} />
-                <span className="truncate">{isDemo ? 'Trading Balance' : `Wallet (${Math.round((user.walletBalance / (totalWealth || 1)) * 100)}%)`}</span>
+                <span className="truncate">{isDemo ? 'Trading Balance' : `Wallet (${Math.round((walletBal / (totalWealth || 1)) * 100)}%)`}</span>
               </div>
               {!isDemo && (
                 <>
                   <div className="flex items-center gap-1 truncate col-span-1">
                     <div className="w-1.5 h-1.5 rounded bg-blue-400 shrink-0" />
-                    <span className="truncate">Copy ({Math.round((user.copyTradingAllocated / (totalWealth || 1)) * 100)}%)</span>
+                    <span className="truncate">Copy ({Math.round((copyTradingAlloc / (totalWealth || 1)) * 100)}%)</span>
                   </div>
                   <div className="flex items-center gap-1 truncate col-span-1">
                     <div className="w-1.5 h-1.5 rounded bg-amber-400 shrink-0" />
-                    <span className="truncate">Earn ({Math.round((user.investedCapital / (totalWealth || 1)) * 100)}%)</span>
+                    <span className="truncate">Earn ({Math.round((investedCap / (totalWealth || 1)) * 100)}%)</span>
                   </div>
                 </>
               )}

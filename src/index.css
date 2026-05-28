@@ -104,6 +104,31 @@ body {
 .text-gray-600, .text-slate-605 {
   color: var(--color-text-muted) !important;
 }
+
+/* Theme adaptability overrides for popup modals, forms, input text and selections in light mode */
+html[data-theme="light"] input:not([type="range"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]),
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  color: #0F172A !important;
+  background-color: #E2E8F0 !important;
+  border-color: #CBD5E1 !important;
+}
+
+html[data-theme="light"] input:not([type="range"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"])::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: #64748B !important;
+}
+
+/* Modal and card headings/labels text-white overrides in light mode */
+html[data-theme="light"] h3.text-white,
+html[data-theme="light"] h2.text-white,
+html[data-theme="light"] h4.text-white,
+html[data-theme="light"] p.text-white,
+html[data-theme="light"] span.text-white,
+html[data-theme="light"] .font-semibold.text-white {
+  color: #0F172A !important;
+}
+
 input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 0 10px #00C087;
 }

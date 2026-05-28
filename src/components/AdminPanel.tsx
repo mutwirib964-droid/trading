@@ -816,7 +816,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
                   required
                 />
                 <div className="text-[10px] text-gray-500 font-mono mt-1 text-right italic font-medium">
-                  Approx. KES {((parseFloat(simAmount) || 0) * 130).toLocaleString()}
+                  Approx. KES {((parseFloat(simAmount) || 0) * 1).toLocaleString()}
                 </div>
               </div>
 
