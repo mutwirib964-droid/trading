@@ -2642,7 +2642,7 @@ export default function App() {
             className={`pointer-events-auto flex items-start gap-3 backdrop-blur-md border rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
               theme === 'dark' 
                 ? 'bg-[#0b0f19]/95 text-white border-gray-800' 
-                : 'bg-white/95 text-gray-905 border-gray-200'
+                : 'bg-white/95 text-gray-900 border-gray-200'
             } ${
               t.type === 'SUCCESS' 
                 ? 'border-emerald-500/30' 
@@ -2663,19 +2663,23 @@ export default function App() {
                     ? 'text-emerald-500' 
                     : t.type === 'ERROR' 
                     ? 'text-rose-500' 
-                    : 'text-blue-500'
+                    : 'text-blue-500 font-medium'
                 }`}>
                   {t.type === 'SUCCESS' ? '✓ SYSTEM CONFIRMED' : t.type === 'ERROR' ? '⚠ ACTION REJECTED' : 'ℹ TRANSACTION INFO'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
-                  className="transition-colors pointer-events-auto text-gray-400 hover:text-gray-950 dark:hover:text-white"
+                  className={`transition-colors pointer-events-auto ${
+                    theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-950'
+                  }`}
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <p className="text-xs font-sans font-semibold leading-relaxed text-gray-300">
+              <p className={`text-xs font-sans font-semibold leading-relaxed ${
+                theme === 'dark' ? 'text-gray-200' : 'text-gray-800'
+              }`}>
                 {t.message}
               </p>
             </div>
