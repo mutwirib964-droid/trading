@@ -194,6 +194,12 @@ input[type="range"]::-webkit-slider-thumb {
 .bg-\[\#0b0f19\]\/30 {
   background-color: rgba(var(--color-bg-card-rgb), 0.3) !important;
 }
+.bg-\[\#0b0f19\]\/95 {
+  background-color: rgba(var(--color-bg-card-rgb), 0.95) !important;
+}
+.bg-\[\#0b0f19\]\/85 {
+  background-color: rgba(var(--color-bg-card-rgb), 0.85) !important;
+}
 .text-gray-550, .text-slate-550 {
   color: var(--color-text-dim) !important;
 }

@@ -46,6 +46,7 @@ ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS amount NUMERIC(15, 4) D
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS asset TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS reference TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 
 -- 2b. Ensure the trades table exists (to support demo/real-time trade state alignment query ledger)
@@ -450,7 +451,8 @@ CREATE OR REPLACE FUNCTION public.system_record_transaction(
     tx_amount NUMERIC,
     tx_asset TEXT,
     tx_address TEXT,
-    tx_status TEXT
+    tx_status TEXT,
+    tx_reference TEXT DEFAULT NULL
 ) RETURNS VOID AS $$
 DECLARE
     expected_token TEXT := 'payhero_system_clear_token_vfx';
@@ -460,8 +462,8 @@ BEGIN
     END IF;
 
     -- Ensure we have a matching record in public.transactions safely
-    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, created_at)
-    VALUES (target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), timezone('utc'::text, now()));
+    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, reference, created_at)
+    VALUES (target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), tx_reference, timezone('utc'::text, now()));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -513,6 +515,57 @@ BEGIN
         promo_code_used = COALESCE(val_promo_code_used, promo_code_used),
         updated_at = timezone('utc'::text, now())
     WHERE LOWER(email) = LOWER(target_email);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+CREATE OR REPLACE FUNCTION public.system_save_transaction_and_sync_balance(
+    secure_token TEXT,
+    target_email TEXT,
+    tx_type TEXT,
+    tx_amount NUMERIC,
+    tx_asset TEXT,
+    tx_address TEXT,
+    tx_status TEXT,
+    tx_reference TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+DECLARE
+    expected_token TEXT := 'payhero_system_clear_token_vfx';
+    current_bal NUMERIC;
+    current_dep NUMERIC;
+    clean_type TEXT;
+    clean_status TEXT;
+BEGIN
+    IF secure_token <> expected_token THEN
+        RAISE EXCEPTION 'Invalid system clearance token.';
+    END IF;
+
+    clean_type := UPPER(COALESCE(tx_type, 'DEPOSIT'));
+    clean_status := UPPER(COALESCE(tx_status, 'COMPLETED'));
+
+    -- 1. Insert into transactions table bypassing RLS
+    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, reference, created_at)
+    VALUES (target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
+
+    -- 2. Adjust the profiles table balance if the profile exists
+    SELECT wallet_balance, total_deposited INTO current_bal, current_dep 
+    FROM public.profiles 
+    WHERE LOWER(email) = LOWER(target_email);
+
+    IF FOUND THEN
+        IF clean_type = 'WITHDRAWAL' THEN
+            current_bal := COALESCE(current_bal, 0) - tx_amount;
+        ELSIF clean_type = 'DEPOSIT' AND (clean_status = 'COMPLETED' OR clean_status = 'SUCCESS' OR clean_status = 'SUCCESSFUL') THEN
+            current_bal := COALESCE(current_bal, 0) + tx_amount;
+            current_dep := COALESCE(current_dep, 0) + tx_amount;
+        END IF;
+
+        UPDATE public.profiles
+        SET wallet_balance = current_bal,
+            total_deposited = current_dep,
+            updated_at = timezone('utc'::text, now())
+        WHERE LOWER(email) = LOWER(target_email);
+    END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

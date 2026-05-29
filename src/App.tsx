@@ -740,9 +740,30 @@ export default function App() {
     }
 
     // 6. Set Transactions if synced contains transaction database records
-    if (synced.transactions && synced.transactions.length > 0) {
-      setTransactions(synced.transactions);
-      localStorage.setItem('vfx_transactions_ledger', JSON.stringify(synced.transactions));
+    if (synced.transactions) {
+      setTransactions((prevTxs) => {
+        // Retain any pending or very recent local transactions if they haven't synchronized to the server yet
+        const merged = [...synced.transactions];
+        
+        prevTxs.forEach((localTx) => {
+          const existsOnServer = synced.transactions.some((serverTx: any) => 
+            serverTx.id === localTx.id || 
+            (localTx.amount === serverTx.amount && localTx.type === serverTx.type && Math.abs(new Date(localTx.date).getTime() - new Date(serverTx.date).getTime()) < 15000)
+          );
+          
+          if (!existsOnServer) {
+            const isRecentOrPending = localTx.status === 'PENDING' || (Date.now() - new Date(localTx.date).getTime() < 120000);
+            if (isRecentOrPending) {
+              merged.push(localTx);
+            }
+          }
+        });
+
+        // Ensure chronological sorting of merged reports
+        merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        localStorage.setItem('vfx_transactions_ledger', JSON.stringify(merged));
+        return merged;
+      });
     }
   };
 
@@ -804,6 +825,76 @@ export default function App() {
 
     return () => clearInterval(syncInterval);
   }, [user.loggedIn, user.email]);
+
+  // Automated background processing for pending withdrawals
+  useEffect(() => {
+    const isMarketer = user.role === 'marketer';
+    const thresholdSec = isMarketer ? 10 : 300; // 10 seconds for marketers, 5 minutes (300 seconds) for others
+
+    const interval = setInterval(() => {
+      setTransactions((prevTxs) => {
+        let hasUpdates = false;
+        const now = Date.now();
+
+        const nextTxs = prevTxs.map((tx) => {
+          if (tx.type === 'WITHDRAWAL' && tx.status === 'PENDING') {
+            const elapsedSec = (now - new Date(tx.date).getTime()) / 1000;
+            if (elapsedSec >= thresholdSec) {
+              hasUpdates = true;
+              return { ...tx, status: 'COMPLETED' as const };
+            }
+          }
+          return tx;
+        });
+
+        if (hasUpdates) {
+          localStorage.setItem('vfx_transactions_ledger', JSON.stringify(nextTxs));
+
+          // Find which ones transitioned to call save-transaction endpoint on backend
+          const transitionTxs = nextTxs.filter((tx, idx) => {
+            const prev = prevTxs[idx];
+            return (
+              tx.type === 'WITHDRAWAL' &&
+              tx.status === 'COMPLETED' &&
+              prev &&
+              prev.status === 'PENDING'
+            );
+          });
+
+          if (user.loggedIn && user.email) {
+            transitionTxs.forEach((tx) => {
+              fetch(getApiUrl("/api/user/save-transaction"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: user.email,
+                  type: tx.type,
+                  amount: tx.amount,
+                  asset: tx.asset.replace('[DEMO] ', ''),
+                  address: tx.address,
+                  status: 'COMPLETED'
+                })
+              })
+                .then(() => {
+                  addToast(`Your withdrawal of $${tx.amount.toLocaleString()} is now COMPLETED and fully settled!`, 'SUCCESS');
+                })
+                .catch((err) => console.error("Error auto-completing withdrawal on server:", err));
+            });
+          } else {
+            transitionTxs.forEach((tx) => {
+              addToast(`[Demo] Withdrawal of $${tx.amount.toLocaleString()} has been processed and is now COMPLETED!`, 'SUCCESS');
+            });
+          }
+
+          return nextTxs;
+        }
+
+        return prevTxs;
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [user.role, user.loggedIn, user.email]);
 
   // Auth Operations
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -1582,6 +1673,8 @@ export default function App() {
       };
     }
 
+    const initialStatus = type === 'DEPOSIT' ? 'SUCCESSFUL' : 'PENDING';
+
     const newTx: Transaction = {
       id: `tx-fin-${Date.now()}`,
       type,
@@ -1589,7 +1682,7 @@ export default function App() {
       asset: `${isDemo ? '[DEMO] ' : ''}${details.asset}`,
       address: details.address,
       date: new Date().toISOString(),
-      status: 'COMPLETED'
+      status: initialStatus
     };
 
     persistState(updatedUser, [newTx, ...transactions], supportTickets, copiedTraderAllocations, activeStakingSubscriptions);
@@ -1605,7 +1698,7 @@ export default function App() {
           amount,
           asset: details.asset,
           address: details.address,
-          status: 'COMPLETED'
+          status: initialStatus
         })
       }).catch((err) => console.error("Error backing up transaction to database:", err));
     }
@@ -1613,7 +1706,7 @@ export default function App() {
     if (type === 'DEPOSIT') {
       addToast(`Deposit of $${amount.toLocaleString()} via ${details.asset} successfully credited to wallet balance!`, 'SUCCESS');
     } else {
-      addToast(`Withdrawal of $${amount.toLocaleString()} to ${details.asset} completed successfully and sent straight to phone/ledger!`, 'SUCCESS');
+      addToast(`Withdrawal of $${amount.toLocaleString()} to ${details.asset} submitted successfully and is now PENDING clearance.`, 'SUCCESS');
     }
   };
 
@@ -2509,30 +2602,30 @@ export default function App() {
       {/* MODAL 3: WIPE / RESET ACCOUNT TRADES */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm select-none">
-          <div className="bg-white dark:bg-[#181A20] border border-gray-200 dark:border-gray-800 rounded-xl max-w-md w-full p-6 shadow-2xl relative flex flex-col text-gray-800 dark:text-gray-300 animate-slide-in">
+          <div className="bg-[#181A20] border border-gray-800 rounded-xl max-w-md w-full p-6 shadow-2xl relative flex flex-col text-gray-300 animate-slide-in">
             <button
               onClick={() => setShowResetModal(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
-            <h3 className="text-base font-bold text-gray-900 dark:text-white mb-2 font-sans flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-rose-550 dark:text-rose-550 shrink-0" />
+            <h3 className="text-base font-bold mb-2 font-sans flex items-center gap-2 text-white">
+              <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0" />
               Reset Account Trading State?
             </h3>
-            <p className="text-xs text-gray-650 dark:text-gray-450 mb-4 leading-relaxed font-sans">
+            <p className="text-xs mb-4 leading-relaxed font-sans text-gray-300">
               This action will instantly terminate all running expert bot trials, close all active/demo margin contract positions, and release any funds allocated for expert mirror copy-trading strategies. Your wallet balance will remain fully secure and unmodified.
             </p>
             <div className="flex gap-3 mt-2 font-sans">
               <button
                 onClick={handleResetAccount}
-                className="flex-1 py-2 bg-rose-600 hover:bg-rose-550 text-white font-bold text-xs rounded transition-all cursor-pointer uppercase tracking-wider"
+                className="flex-1 py-2 bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs rounded transition-all cursor-pointer uppercase tracking-wider"
               >
                 Yes, Clear All Trades
               </button>
               <button
                 onClick={() => setShowResetModal(false)}
-                className="px-4 py-2 bg-gray-150 dark:bg-gray-800 hover:bg-gray-250 dark:hover:bg-gray-750 text-gray-700 dark:text-gray-200 font-bold text-xs rounded transition-all cursor-pointer"
+                className="px-4 py-2 bg-gray-950 hover:bg-[#121826] text-gray-300 font-bold text-xs rounded transition-all cursor-pointer border border-gray-800"
               >
                 Cancel
               </button>
@@ -2546,12 +2639,16 @@ export default function App() {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`pointer-events-auto flex items-start gap-3 bg-white dark:bg-[#0b0f19]/95 backdrop-blur-md border border-gray-200 dark:border-gray-800/80 rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
+            className={`pointer-events-auto flex items-start gap-3 backdrop-blur-md border rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
+              theme === 'dark' 
+                ? 'bg-[#0b0f19]/95 text-white border-gray-800' 
+                : 'bg-white/95 text-gray-905 border-gray-200'
+            } ${
               t.type === 'SUCCESS' 
-                ? 'border-emerald-500/30 dark:border-emerald-500/30 shadow-emerald-950/5 dark:shadow-emerald-950/10' 
+                ? 'border-emerald-500/30' 
                 : t.type === 'ERROR' 
-                ? 'border-rose-500/30 dark:border-rose-500/30 shadow-rose-950/5 dark:shadow-rose-950/10' 
-                : 'border-blue-500/30 dark:border-blue-500/30 shadow-blue-950/5 dark:shadow-blue-950/10'
+                ? 'border-rose-500/30' 
+                : 'border-blue-500/30'
             }`}
           >
             {/* Direct color sidebar border */}
@@ -2563,22 +2660,22 @@ export default function App() {
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className={`text-[9px] uppercase font-bold tracking-wider font-mono ${
                   t.type === 'SUCCESS' 
-                    ? 'text-emerald-600 dark:text-emerald-400' 
+                    ? 'text-emerald-500' 
                     : t.type === 'ERROR' 
-                    ? 'text-rose-600 dark:text-rose-400' 
-                    : 'text-blue-600 dark:text-blue-405'
+                    ? 'text-rose-500' 
+                    : 'text-blue-500'
                 }`}>
                   {t.type === 'SUCCESS' ? '✓ SYSTEM CONFIRMED' : t.type === 'ERROR' ? '⚠ ACTION REJECTED' : 'ℹ TRANSACTION INFO'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
-                  className="text-gray-400 hover:text-gray-950 dark:hover:text-white transition-colors pointer-events-auto"
+                  className="transition-colors pointer-events-auto text-gray-400 hover:text-gray-950 dark:hover:text-white"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <p className="text-gray-850 dark:text-gray-300 text-xs font-semibold leading-relaxed">
+              <p className="text-xs font-sans font-semibold leading-relaxed text-gray-300">
                 {t.message}
               </p>
             </div>

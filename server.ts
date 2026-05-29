@@ -311,31 +311,69 @@ app.post("/api/user/sync", async (req, res) => {
           .or(`email.eq.${emailLower},user_email.eq.${emailLower}`)
           .order("created_at", { ascending: false });
         if (dbTxs) {
-          transactions = dbTxs.map((t: any) => ({
-            id: t.id,
-            type: t.type,
-            amount: Number(t.amount || 0),
-            asset: t.asset,
-            address: t.address || "",
-            date: t.created_at || new Date().toISOString(),
-            status: t.status || "COMPLETED"
+          const userRole = profile?.role || memUser?.role || "user";
+          const thresholdSec = userRole === 'marketer' ? 10 : 300;
+          const now = Date.now();
+
+          transactions = await Promise.all(dbTxs.map(async (t: any) => {
+            let currentStatus = t.status || "COMPLETED";
+
+            if (t.type === "WITHDRAWAL" && currentStatus === "PENDING") {
+              const txDate = t.created_at ? new Date(t.created_at) : new Date();
+              const elapsedSec = (now - txDate.getTime()) / 1000;
+              if (elapsedSec >= thresholdSec) {
+                currentStatus = "COMPLETED";
+                // Persist status change asynchronously to the database
+                console.log(`[Auto-Complete Server DB] Setting pending withdrawal ${t.id} to COMPLETED for user ${emailLower} (${userRole})`);
+                dbClient.from("transactions").update({ status: "COMPLETED" }).eq("id", t.id).then(({ error }) => {
+                  if (error) console.error(`Error background-completing withdrawal ${t.id}:`, error.message);
+                });
+              }
+            }
+
+            return {
+              id: t.id,
+              type: t.type,
+              amount: Number(t.amount || 0),
+              asset: t.asset,
+              address: t.address || "",
+              date: t.created_at || new Date().toISOString(),
+              status: currentStatus
+            };
           }));
         }
       } catch (err) {
         console.warn("Could not query transactions from Supabase on sync:", err);
       }
     } else {
+      const userRole = profile?.role || memUser?.role || "user";
+      const thresholdSec = userRole === 'marketer' ? 10 : 300;
+      const now = Date.now();
+
       transactions = memoryTransactions
         .filter(t => t.email.toLowerCase() === emailLower)
-        .map((t: any) => ({
-          id: t.id,
-          type: t.type,
-          amount: Number(t.amount || 0),
-          asset: t.asset,
-          address: t.address || "",
-          date: t.date || new Date().toISOString(),
-          status: t.status || "COMPLETED"
-        }));
+        .map((t: any) => {
+          let currentStatus = t.status || "COMPLETED";
+
+          if (t.type === "WITHDRAWAL" && currentStatus === "PENDING") {
+            const txDate = t.date ? new Date(t.date) : new Date();
+            const elapsedSec = (now - txDate.getTime()) / 1000;
+            if (elapsedSec >= thresholdSec) {
+              currentStatus = "COMPLETED";
+              t.status = "COMPLETED"; // Update memory representation
+            }
+          }
+
+          return {
+            id: t.id,
+            type: t.type,
+            amount: Number(t.amount || 0),
+            asset: t.asset,
+            address: t.address || "",
+            date: t.date || new Date().toISOString(),
+            status: currentStatus
+          };
+        });
     }
 
     if (profile && !fallbackToMemory) {
@@ -730,10 +768,10 @@ app.get("/api/payhero/check-status", async (req, res) => {
     // Always check Supabase first to get real-time source-of-truth status
     const db = getSupabase();
     if (db) {
-      // 1. Try matching the exact reference inside the address field
+      // 1. Try matching the exact reference column or fallback to address text
       const { data: profileTxs } = await db.from("transactions")
         .select("*")
-        .or(`address.eq.M-Pesa IPN Ref: ${reference},address.eq.IPN Ref: ${reference},address.like.%${reference}%`)
+        .or(`reference.eq.${reference},address.eq.M-Pesa IPN Ref: ${reference},address.eq.IPN Ref: ${reference},address.like.%${reference}%`)
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -770,13 +808,13 @@ app.get("/api/payhero/check-status", async (req, res) => {
         // Sync local memory status as well if present
         const txIndex = memoryTransactions.findIndex(t => (t as any).reference === reference);
         if (txIndex !== -1) {
-          memoryTransactions[txIndex].status = "COMPLETED";
+          memoryTransactions[txIndex].status = profileTx.status || "PENDING";
           memoryTransactions[txIndex].asset = profileTx.asset;
         }
         
         return res.json({
           success: true,
-          status: "COMPLETED",
+          status: profileTx.status || "PENDING",
           amount: profileTx.amount,
           asset: profileTx.asset
         });
@@ -909,6 +947,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
             asset: "M-Pesa Mobile Push (Pending)",
             address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
             status: "PENDING",
+            reference: externalRef,
             created_at: new Date().toISOString()
           });
         } catch (dbErr) {
@@ -946,6 +985,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
             asset: `M-Pesa Gateway Failure: ${errMsg.slice(0, 50)}`,
             address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
             status: "FAILED",
+            reference: externalRef,
             created_at: new Date().toISOString()
           });
         } catch (dbErr) {
@@ -987,34 +1027,48 @@ app.post("/api/user/save-transaction", async (req, res) => {
     };
     memoryTransactions.unshift(newTx);
 
+    // Update in-memory user balance representation
+    const memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+    if (memUser) {
+      if (cleanType === "WITHDRAWAL") {
+        memUser.wallet_balance = Number((memUser.wallet_balance - cleanAmount).toFixed(2));
+      } else if (cleanType === "DEPOSIT" && (cleanStatus === "COMPLETED" || cleanStatus === "SUCCESS" || cleanStatus === "SUCCESSFUL")) {
+        memUser.wallet_balance = Number((memUser.wallet_balance + cleanAmount).toFixed(2));
+        memUser.total_deposited = Number((memUser.total_deposited + cleanAmount).toFixed(2));
+      }
+    }
+
     // 2. Save directly to Supabase table
     const db = getSupabase();
     if (db) {
       try {
-        const { error: txErr } = await db.from("transactions").insert({
-          email: emailLower,
-          user_email: emailLower,
-          type: cleanType,
-          amount: cleanAmount,
-          asset: String(asset || "Unknown Asset"),
-          address: String(address || "Liquid Asset block"),
-          status: cleanStatus,
-          created_at: new Date().toISOString()
+        console.log(`[save-transaction] Synchronizing transaction of type ${cleanType} of amount ${cleanAmount} USD for ${emailLower} directly using secure bypass RPC...`);
+        const { error: txRpcErr } = await db.rpc("system_save_transaction_and_sync_balance", {
+          secure_token: 'payhero_system_clear_token_vfx',
+          target_email: emailLower,
+          tx_type: cleanType,
+          tx_amount: cleanAmount,
+          tx_asset: String(asset || "Unknown Asset"),
+          tx_address: String(address || "Liquid Asset block"),
+          tx_status: cleanStatus
         });
-        if (txErr) {
-          console.warn("[save-transaction] Standard select/insert failed on Supabase. Retrying using bypass RPC if available:", txErr.message);
-          const { error: txRpcErr } = await db.rpc("system_record_transaction", {
-            secure_token: 'payhero_system_clear_token_vfx',
-            target_email: emailLower,
-            tx_type: cleanType,
-            tx_amount: cleanAmount,
-            tx_asset: String(asset || "Unknown Asset"),
-            tx_address: String(address || "Liquid Asset block"),
-            tx_status: cleanStatus
+        if (txRpcErr) {
+          console.warn("[save-transaction] Secure sync RPC function failed. Falling back to normal insert:", txRpcErr.message);
+          
+          // Legacy/normal fallback in case the schema wasn't fully applied
+          const { error: txErr } = await db.from("transactions").insert({
+            email: emailLower,
+            user_email: emailLower,
+            type: cleanType,
+            amount: cleanAmount,
+            asset: String(asset || "Unknown Asset"),
+            address: String(address || "Liquid Asset block"),
+            status: cleanStatus,
+            created_at: new Date().toISOString()
           });
-          if (txRpcErr) {
-            console.warn("[save-transaction] RPC insert failed too:", txRpcErr.message);
-          }
+          if (txErr) console.warn("[save-transaction] Manual fallback insert failed too:", txErr.message);
+        } else {
+          console.log(`[save-transaction] Successfully committed transaction & adjusted profile in Supabase for ${emailLower}`);
         }
       } catch (dbErr: any) {
         console.error("Database error saving manual transaction:", dbErr.message || dbErr);
@@ -1112,7 +1166,7 @@ app.post("/api/payhero/callback", async (req, res) => {
       console.log(`[Callback Processing] Decoded key "${emailLower}" is not a valid email address. Resolving from database transaction reference...`);
       const { data: matchedTxs } = await db.from("transactions")
         .select("email, user_email")
-        .or(`address.eq.M-Pesa IPN Ref: ${external_reference},address.like.%${external_reference}%,address.like.%${emailLower}%`)
+        .or(`reference.eq.${external_reference},reference.eq.${emailLower},address.eq.M-Pesa IPN Ref: ${external_reference},address.like.%${external_reference}%,address.like.%${emailLower}%`)
         .limit(1);
 
       if (matchedTxs && matchedTxs[0]) {
@@ -1152,6 +1206,14 @@ app.post("/api/payhero/callback", async (req, res) => {
 
       // 1. Credit Supabase if ONLINE
       if (db && emailLower.includes("@")) {
+        // First try to look up the existing pending transaction to update it
+        const { data: existingTxs } = await db.from("transactions")
+          .select("id, status")
+          .eq("reference", external_reference)
+          .limit(1);
+
+        const existingTx = existingTxs?.[0];
+
         // Invoke credit bypass RPC
         const { error: creditRpcErr } = await db.rpc("system_credit_user", {
           secure_token: 'payhero_system_clear_token_vfx',
@@ -1173,28 +1235,40 @@ app.post("/api/payhero/callback", async (req, res) => {
           }
         }
 
-        // Invoke transaction insert bypass RPC
-        const { error: txRpcErr } = await db.rpc("system_record_transaction", {
-          secure_token: 'payhero_system_clear_token_vfx',
-          target_email: emailLower,
-          tx_type: "DEPOSIT",
-          tx_amount: usdAdded,
-          tx_asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`,
-          tx_address: `IPN Ref: ${external_reference}`,
-          tx_status: "COMPLETED"
-        });
-
-        if (txRpcErr) {
-          console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
-          await db.from("transactions").insert({
-            email: emailLower,
-            user_email: emailLower,
-            type: "DEPOSIT",
+        if (existingTx) {
+          // Update the pending transaction status instead of adding duplicate records
+          console.log(`[Callback Processing] Updating existing transaction status to COMPLETED for reference: ${external_reference}`);
+          await db.from("transactions").update({
+            status: "COMPLETED",
             amount: usdAdded,
-            asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
-            address: `M-Pesa IPN Ref: ${external_reference}`,
-            status: "COMPLETED"
+            asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`
+          }).eq("id", existingTx.id);
+        } else {
+          // Invoke transaction insert bypass RPC
+          const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+            secure_token: 'payhero_system_clear_token_vfx',
+            target_email: emailLower,
+            tx_type: "DEPOSIT",
+            tx_amount: usdAdded,
+            tx_asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`,
+            tx_address: `IPN Ref: ${external_reference}`,
+            tx_status: "COMPLETED",
+            tx_reference: external_reference
           });
+
+          if (txRpcErr) {
+            console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
+            await db.from("transactions").insert({
+              email: emailLower,
+              user_email: emailLower,
+              type: "DEPOSIT",
+              amount: usdAdded,
+              asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
+              address: `M-Pesa IPN Ref: ${external_reference}`,
+              status: "COMPLETED",
+              reference: external_reference
+            });
+          }
         }
       }
 
@@ -1251,27 +1325,46 @@ app.post("/api/payhero/callback", async (req, res) => {
       
       const db = getSupabase();
       if (db) {
-        // Record failed transaction via SECURITY DEFINER bypass RPC
-        const { error: txRpcErr } = await db.rpc("system_record_transaction", {
-          secure_token: 'payhero_system_clear_token_vfx',
-          target_email: emailLower,
-          tx_type: "DEPOSIT",
-          tx_amount: 0,
-          tx_asset: "M-Pesa (Cancelled/Declined)",
-          tx_address: `IPN Ref: ${external_reference}`,
-          tx_status: "FAILED"
-        });
+        // First try to check if there is an existing pending transaction to update it to FAILED
+        const { data: existingTxs } = await db.from("transactions")
+          .select("id, status")
+          .eq("reference", external_reference || "")
+          .limit(1);
 
-        if (txRpcErr) {
-          console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
-          await db.from("transactions").insert({
-            email: emailLower,
-            type: "DEPOSIT",
+        const existingTx = existingTxs?.[0];
+        if (existingTx) {
+          console.log(`[Callback Processing] Updating existing transaction status to FAILED in DB for reference: ${external_reference}`);
+          await db.from("transactions").update({
+            status: "FAILED",
             amount: 0,
-            asset: "M-Pesa (Cancelled/Declined)",
-            address: `M-Pesa IPN Ref: ${external_reference}`,
-            status: "FAILED"
+            asset: "M-Pesa (Cancelled/Declined)"
+          }).eq("id", existingTx.id);
+        } else {
+          // Record failed transaction via SECURITY DEFINER bypass RPC
+          const { error: txRpcErr } = await db.rpc("system_record_transaction", {
+            secure_token: 'payhero_system_clear_token_vfx',
+            target_email: emailLower,
+            tx_type: "DEPOSIT",
+            tx_amount: 0,
+            tx_asset: "M-Pesa (Cancelled/Declined)",
+            tx_address: `IPN Ref: ${external_reference}`,
+            tx_status: "FAILED",
+            tx_reference: external_reference
           });
+
+          if (txRpcErr) {
+            console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
+            await db.from("transactions").insert({
+              email: emailLower,
+              user_email: emailLower,
+              type: "DEPOSIT",
+              amount: 0,
+              asset: "M-Pesa (Cancelled/Declined)",
+              address: `M-Pesa IPN Ref: ${external_reference}`,
+              status: "FAILED",
+              reference: external_reference
+            });
+          }
         }
       }
     }

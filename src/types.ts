@@ -62,7 +62,7 @@ export interface Transaction {
   asset: string;
   address?: string;
   date: string;
-  status: 'PENDING' | 'COMPLETED' | 'REJECTED';
+  status: 'PENDING' | 'COMPLETED' | 'REJECTED' | 'SUCCESSFUL' | 'FAILED' | 'DECLINED' | 'CANCELLED' | 'SUCCESS';
 }
 
 export interface CopyTrader {
