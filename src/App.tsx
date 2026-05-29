@@ -273,13 +273,6 @@ export default function App() {
         console.error("Failed to parse saved copied allocations", err);
       }
     }
-    if (savedStakingSub) {
-      try {
-        setActiveStakingSubscriptions(JSON.parse(savedStakingSub));
-      } catch (err) {
-        console.error("Failed to parse saved staking subscriptions", err);
-      }
-    }
   }, []);
 
   // Hydrate changes to LocalStorage safely
@@ -733,11 +726,13 @@ export default function App() {
       localStorage.setItem('vfx_copied_allocations', JSON.stringify(synced.copiedTraderAllocations));
     }
 
-    // 5. Set active staking subscriptions
+    // 5. Set active staking subscriptions (Bypassed to allow yield to wait for user enrollment action explicitly in the session)
+    /*
     if (synced.activeStakingSubscriptions) {
       setActiveStakingSubscriptions(synced.activeStakingSubscriptions);
       localStorage.setItem('vfx_staking_subs', JSON.stringify(synced.activeStakingSubscriptions));
     }
+    */
 
     // 6. Set Transactions if synced contains transaction database records
     if (synced.transactions) {
@@ -1119,7 +1114,7 @@ export default function App() {
           transactions: setupTx,
           supportTickets: synced.supportTickets || supportTickets,
           copiedTraderAllocations: (synced.copiedTraderAllocations !== undefined && synced.copiedTraderAllocations !== null) ? synced.copiedTraderAllocations : oldCopiedAlloc,
-          activeStakingSubscriptions: (synced.activeStakingSubscriptions !== undefined && synced.activeStakingSubscriptions !== null) ? synced.activeStakingSubscriptions : oldStakingSub
+          activeStakingSubscriptions: []
         });
         
         if (isAdmin) {
@@ -2641,44 +2636,44 @@ export default function App() {
             key={t.id}
             className={`pointer-events-auto flex items-start gap-3 backdrop-blur-md border rounded-xl p-3.5 shadow-2xl transition-all duration-300 relative overflow-hidden animate-slide-in ${
               theme === 'dark' 
-                ? 'bg-[#0b0f19]/95 text-white border-gray-800' 
-                : 'bg-white/95 text-gray-900 border-gray-200'
+                ? 'bg-[#0b0f19] border-[#1e293b]' 
+                : 'bg-[#ffffff] border-[#cbd5e1]'
             } ${
               t.type === 'SUCCESS' 
-                ? 'border-emerald-500/30' 
+                ? 'border-emerald-500/50 shadow-emerald-500/5' 
                 : t.type === 'ERROR' 
-                ? 'border-rose-500/30' 
-                : 'border-blue-500/30'
+                ? 'border-rose-500/50 shadow-rose-500/5' 
+                : 'border-blue-500/50 shadow-blue-500/5'
             }`}
           >
             {/* Direct color sidebar border */}
             <div className={`absolute top-0 bottom-0 left-0 w-1 ${
-              t.type === 'SUCCESS' ? 'bg-emerald-500' : t.type === 'ERROR' ? 'bg-rose-500' : 'bg-blue-500'
+              t.type === 'SUCCESS' ? 'bg-[#00C087]' : t.type === 'ERROR' ? 'bg-[#F84960]' : 'bg-[#3b82f6]'
             }`} />
 
             <div className="flex-1 min-w-0 pl-1.5 text-left font-sans">
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className={`text-[9px] uppercase font-bold tracking-wider font-mono ${
+                <span className={`text-[9.5px] uppercase font-bold tracking-widest font-sans ${
                   t.type === 'SUCCESS' 
-                    ? 'text-emerald-500' 
+                    ? 'text-[#00C087]' 
                     : t.type === 'ERROR' 
-                    ? 'text-rose-500' 
-                    : 'text-blue-500 font-medium'
+                    ? 'text-[#F84960]' 
+                    : 'text-[#3b82f6]'
                 }`}>
                   {t.type === 'SUCCESS' ? '✓ SYSTEM CONFIRMED' : t.type === 'ERROR' ? '⚠ ACTION REJECTED' : 'ℹ TRANSACTION INFO'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
-                  className={`transition-colors pointer-events-auto ${
-                    theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-950'
+                  className={`transition-colors pointer-events-auto p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10 ${
+                    theme === 'dark' ? 'text-[#94a3b8] hover:text-[#ffffff]' : 'text-[#64748b] hover:text-[#0f172a]'
                   }`}
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
               <p className={`text-xs font-sans font-semibold leading-relaxed ${
-                theme === 'dark' ? 'text-gray-200' : 'text-gray-800'
+                theme === 'dark' ? 'text-[#f3f4f6]' : 'text-[#0f172a]'
               }`}>
                 {t.message}
               </p>
