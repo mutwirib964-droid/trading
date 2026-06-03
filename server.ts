@@ -966,7 +966,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       const db = getSupabase();
       if (db) {
         try {
-          await db.from("transactions").insert({
+          const { error: insertErr } = await db.from("transactions").insert({
             id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
@@ -978,6 +978,21 @@ app.post("/api/payhero/stkpush", async (req, res) => {
             reference: externalRef,
             created_at: new Date().toISOString()
           });
+          if (insertErr) {
+            console.warn("PENDING insert failed, retrying with lowercase 'pending':", insertErr.message);
+            await db.from("transactions").insert({
+              id: crypto.randomUUID(),
+              email: email.toLowerCase(),
+              user_email: email.toLowerCase(),
+              type: "DEPOSIT",
+              amount: Number(amount_usd),
+              asset: "M-Pesa Mobile Push (Pending)",
+              address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
+              status: "pending",
+              reference: externalRef,
+              created_at: new Date().toISOString()
+            });
+          }
         } catch (dbErr) {
           console.error("Failed to insert pending STK transaction to database:", dbErr);
         }
@@ -1005,7 +1020,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       const db = getSupabase();
       if (db) {
         try {
-          await db.from("transactions").insert({
+          const { error: insertErr } = await db.from("transactions").insert({
             id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
@@ -1017,6 +1032,21 @@ app.post("/api/payhero/stkpush", async (req, res) => {
             reference: externalRef,
             created_at: new Date().toISOString()
           });
+          if (insertErr) {
+            console.warn("FAILED insert failed, retrying with lowercase 'failed':", insertErr.message);
+            await db.from("transactions").insert({
+              id: crypto.randomUUID(),
+              email: email.toLowerCase(),
+              user_email: email.toLowerCase(),
+              type: "DEPOSIT",
+              amount: Number(amount_usd),
+              asset: `M-Pesa Gateway Failure: ${errMsg.slice(0, 50)}`,
+              address: `M-Pesa IPN Ref: ${externalRef} (${cleanedPhone})`,
+              status: "failed",
+              reference: externalRef,
+              created_at: new Date().toISOString()
+            });
+          }
         } catch (dbErr) {
           console.error("Failed to insert failed STK transaction to database:", dbErr);
         }
@@ -1508,11 +1538,20 @@ app.post("/api/payhero/callback", async (req, res) => {
 
         if (existingTx) {
           console.log(`[Callback Processing] Updating existing transaction status to COMPLETED for reference: ${external_reference}`);
-          await db.from("transactions").update({
+          const { error: updateErr } = await db.from("transactions").update({
             status: "COMPLETED",
             amount: usdAdded,
             asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`
           }).eq("id", existingTx.id);
+
+          if (updateErr) {
+            console.warn("[Callback Processing] COMPLETED status update failed, retrying with lowercase 'completed':", updateErr.message);
+            await db.from("transactions").update({
+              status: "completed",
+              amount: usdAdded,
+              asset: `M-Pesa (Code: ${mpesa_code || 'Cleared'})`
+            }).eq("id", existingTx.id);
+          }
         } else {
           // Invoke transaction insert bypass RPC
           const { error: txRpcErr } = await db.rpc("system_record_transaction", {
@@ -1528,7 +1567,7 @@ app.post("/api/payhero/callback", async (req, res) => {
 
           if (txRpcErr) {
             console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
-            await db.from("transactions").insert({
+            const { error: insertErr } = await db.from("transactions").insert({
               id: crypto.randomUUID(),
               email: emailLower,
               user_email: emailLower,
@@ -1539,6 +1578,21 @@ app.post("/api/payhero/callback", async (req, res) => {
               status: "COMPLETED",
               reference: external_reference
             });
+
+            if (insertErr) {
+              console.warn("[Callback Processing] COMPLETED status insert failed, retrying with lowercase 'completed':", insertErr.message);
+              await db.from("transactions").insert({
+                id: crypto.randomUUID(),
+                email: emailLower,
+                user_email: emailLower,
+                type: "DEPOSIT",
+                amount: usdAdded,
+                asset: `M-Pesa (Mpesa Code: ${mpesa_code || 'Cleared'})`,
+                address: `M-Pesa IPN Ref: ${external_reference}`,
+                status: "completed",
+                reference: external_reference
+              });
+            }
           }
         }
       }
@@ -1624,11 +1678,20 @@ app.post("/api/payhero/callback", async (req, res) => {
         const existingTx = existingTxs?.[0];
         if (existingTx) {
           console.log(`[Callback Processing] Updating existing transaction status to FAILED in DB for reference: ${external_reference}`);
-          await db.from("transactions").update({
+          const { error: updateErr } = await db.from("transactions").update({
             status: "FAILED",
             amount: 0,
             asset: "M-Pesa (Cancelled/Declined)"
           }).eq("id", existingTx.id);
+
+          if (updateErr) {
+            console.warn("[Callback Processing] FAILED status update failed, retrying with lowercase 'failed':", updateErr.message);
+            await db.from("transactions").update({
+              status: "failed",
+              amount: 0,
+              asset: "M-Pesa (Cancelled/Declined)"
+            }).eq("id", existingTx.id);
+          }
         } else {
           // Record failed transaction via SECURITY DEFINER bypass RPC
           const { error: txRpcErr } = await db.rpc("system_record_transaction", {
@@ -1644,7 +1707,7 @@ app.post("/api/payhero/callback", async (req, res) => {
 
           if (txRpcErr) {
             console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
-            await db.from("transactions").insert({
+            const { error: insertErr } = await db.from("transactions").insert({
               id: crypto.randomUUID(),
               email: emailLower,
               user_email: emailLower,
@@ -1655,6 +1718,21 @@ app.post("/api/payhero/callback", async (req, res) => {
               status: "FAILED",
               reference: external_reference
             });
+
+            if (insertErr) {
+              console.warn("[Callback Processing] FAILED status insert failed, retrying with lowercase 'failed':", insertErr.message);
+              await db.from("transactions").insert({
+                id: crypto.randomUUID(),
+                email: emailLower,
+                user_email: emailLower,
+                type: "DEPOSIT",
+                amount: 0,
+                asset: "M-Pesa (Cancelled/Declined)",
+                address: `M-Pesa IPN Ref: ${external_reference}`,
+                status: "failed",
+                reference: external_reference
+              });
+            }
           }
         }
       }

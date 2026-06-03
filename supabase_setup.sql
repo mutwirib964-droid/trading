@@ -462,14 +462,23 @@ CREATE OR REPLACE FUNCTION public.system_record_transaction(
 ) RETURNS VOID AS $$
 DECLARE
     expected_token TEXT := 'payhero_system_clear_token_vfx';
+    status_val TEXT;
 BEGIN
     IF secure_token <> expected_token THEN
         RAISE EXCEPTION 'Invalid system clearance token.';
     END IF;
 
-    -- Ensure we have a matching record in public.transactions safely
-    INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
-    VALUES (gen_random_uuid()::text, target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), tx_reference, timezone('utc'::text, now()));
+    status_val := COALESCE(tx_status, 'COMPLETED');
+
+    -- Ensure we have a matching record in public.transactions safely with uppercase/lowercase tolerance
+    BEGIN
+        INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+        VALUES (gen_random_uuid()::text, target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, status_val, tx_reference, timezone('utc'::text, now()));
+    EXCEPTION WHEN check_violation THEN
+        status_val := LOWER(status_val);
+        INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+        VALUES (gen_random_uuid()::text, target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, status_val, tx_reference, timezone('utc'::text, now()));
+    END;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -549,9 +558,15 @@ BEGIN
     clean_type := UPPER(COALESCE(tx_type, 'DEPOSIT'));
     clean_status := UPPER(COALESCE(tx_status, 'COMPLETED'));
 
-    -- 1. Insert into transactions table bypassing RLS
-    INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
-    VALUES (gen_random_uuid()::text, target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
+    -- 1. Insert into transactions table bypassing RLS with uppercase/lowercase tolerance for check constraint
+    BEGIN
+        INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+        VALUES (gen_random_uuid()::text, target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
+    EXCEPTION WHEN check_violation THEN
+        clean_status := LOWER(clean_status);
+        INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+        VALUES (gen_random_uuid()::text, target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
+    END;
 
     -- 2. Adjust the profiles table balance if the profile exists
     SELECT wallet_balance, total_deposited INTO current_bal, current_dep 
