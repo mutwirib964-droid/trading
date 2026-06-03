@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text
 );
 
+-- Ensure pre-existing transactions tables have the correct default id generator
+ALTER TABLE public.transactions ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
 -- Dynamically add all expected columns to the transactions table to prevent errors in pre-existing tables!
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS user_email TEXT;
@@ -53,6 +56,9 @@ ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WI
 CREATE TABLE IF NOT EXISTS public.trades (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text
 );
+
+-- Ensure pre-existing trades tables have the correct default id generator
+ALTER TABLE public.trades ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
 
 -- Dynamically add all expected columns to the trades table to prevent schema mismatch errors!
 ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS user_email TEXT;
@@ -462,8 +468,8 @@ BEGIN
     END IF;
 
     -- Ensure we have a matching record in public.transactions safely
-    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, reference, created_at)
-    VALUES (target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), tx_reference, timezone('utc'::text, now()));
+    INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+    VALUES (gen_random_uuid()::text, target_email, target_email, tx_type, tx_amount, tx_asset, tx_address, COALESCE(tx_status, 'COMPLETED'), tx_reference, timezone('utc'::text, now()));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -544,8 +550,8 @@ BEGIN
     clean_status := UPPER(COALESCE(tx_status, 'COMPLETED'));
 
     -- 1. Insert into transactions table bypassing RLS
-    INSERT INTO public.transactions (email, user_email, type, amount, asset, address, status, reference, created_at)
-    VALUES (target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
+    INSERT INTO public.transactions (id, email, user_email, type, amount, asset, address, status, reference, created_at)
+    VALUES (gen_random_uuid()::text, target_email, target_email, clean_type, tx_amount, tx_asset, tx_address, clean_status, tx_reference, timezone('utc'::text, now()));
 
     -- 2. Adjust the profiles table balance if the profile exists
     SELECT wallet_balance, total_deposited INTO current_bal, current_dep 

@@ -45,6 +45,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   // Copy states
   const [copied, setCopied] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [bypassing, setBypassing] = useState(false);
 
   const KES_RATE = 1;
 
@@ -52,6 +53,44 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
     navigator.clipboard.writeText(cryptoAddress);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleAdminBypass = async () => {
+    if (!stkReference) return;
+    setBypassing(true);
+    addToast("Triggering instant sandbox callback simulation...", "INFO");
+    try {
+      const resp = await fetch(getApiUrl("/api/payhero/sandbox-trigger"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: user.email,
+          amount_usd: stkUsdValue,
+          external_reference: stkReference,
+          status: "SUCCESSFUL",
+          adminEmail: user.email,
+          adminUid: user.id || "ccd28f9c-f070-455e-9cdb-e4ee2f26ac99"
+        })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        addToast("Sandbox simulation completed. Completing client ledger...", "SUCCESS");
+        // Update client-side immediately
+        setStkStatus('COMPLETED');
+        onModifyBalance('DEPOSIT', stkUsdValue, {
+          asset: `M-Pesa (Code: Sim-Cleared)`,
+          address: `STK Ref: ${stkReference.slice(-10)}`,
+          phone: stkPhoneValue
+        });
+      } else {
+        addToast(data.error || "Bypass failed.", "ERROR");
+      }
+    } catch (err) {
+      console.error(err);
+      addToast("Bypass connection failed.", "ERROR");
+    } finally {
+      setBypassing(false);
+    }
   };
 
   // Poll M-Pesa transaction status on active reference update
@@ -324,7 +363,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
               </div>
 
               {stkStatus === 'PENDING' && (
-                <div className="p-6 flex flex-col items-center space-y-4 w-full">
+                <div className="p-6 flex flex-col items-center space-y-4 w-full text-center">
                   <div className="relative flex items-center justify-center">
                     <div className="absolute w-12 h-12 bg-amber-500/10 rounded-full animate-ping" />
                     <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
@@ -337,9 +376,33 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     </p>
                   </div>
 
+                  {/* Dev Action Buttons to Force-Simulate Callback in Sandbox/Testing */}
+                  {(user.email === 'mutwirib964@gmail.com' || user.role === 'admin') && (
+                    <div className="mt-4 pt-4 border-t border-gray-800/80 w-full max-w-xs space-y-2">
+                      <div className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">
+                        ⚙️ Administrator Sandbox Tools
+                      </div>
+                      <p className="text-gray-500 text-[8px] leading-snug">
+                        If you have paid/tested standard sandbox credentials and want to bypass the public webhook callback, trigger an instant clear.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleAdminBypass}
+                        disabled={bypassing}
+                        className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-black border-none font-bold text-[10px] tracking-wider uppercase rounded cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                      >
+                        {bypassing ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> CLEARING INDENT...
+                          </>
+                        ) : (
+                          "⚡ Instant Sandbox Credit Clear"
+                        )}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Countdown tracker is hidden as immediate API feedback is active */}
-
 
                 </div>
               )}

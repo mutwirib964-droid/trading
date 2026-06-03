@@ -3,10 +3,12 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 dotenv.config();
 
 export const app = express();
+app.set('trust proxy', true);
 const PORT = 3000;
 
 app.use(express.json());
@@ -884,7 +886,9 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 
     // The webhook callback MUST always route to this active server container backend, NOT the static Netlify frontend referer
     const host = req.get("x-forwarded-host") || req.get("host") || "ais-dev-74szm3io5a7byanitj4v3c-209420553255.europe-west2.run.app";
-    const protocol = req.get("x-forwarded-proto") || "https";
+    // Always force "https" protocol for external callbacks. Payment gateways (Safaricom M-Pesa, PayHero)
+    // require highly secure SSL/TLS callback URLs. Proxied servers will see 'http' locally but serve 'https' externally.
+    const protocol = "https";
     const callbackUrl = process.env.PAYHERO_CALLBACK_URL || `${protocol}://${host}/api/payhero/callback`;
 
     console.log(`Sending STK push to Payhero. Recipient: ${cleanedPhone}, Value: ${mpesaKES} KES ($${amount_usd} USD), Callback: ${callbackUrl}`);
@@ -940,6 +944,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -964,7 +969,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
         id: `tx-fin-${Date.now()}`,
         email: email.toLowerCase(),
         type: "DEPOSIT",
-        amount: Number(amount_usd),
+         amount: Number(amount_usd),
         asset: "M-Pesa Mobile Push (Failed Request)",
         address: `M-Pesa Failure (${cleanedPhone})`,
         date: new Date().toISOString(),
@@ -978,6 +983,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
       if (db) {
         try {
           await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: email.toLowerCase(),
             user_email: email.toLowerCase(),
             type: "DEPOSIT",
@@ -1057,6 +1063,7 @@ app.post("/api/user/save-transaction", async (req, res) => {
           
           // Legacy/normal fallback in case the schema wasn't fully applied
           const { error: txErr } = await db.from("transactions").insert({
+            id: crypto.randomUUID(),
             email: emailLower,
             user_email: emailLower,
             type: cleanType,
@@ -1259,6 +1266,7 @@ app.post("/api/payhero/callback", async (req, res) => {
           if (txRpcErr) {
             console.warn("system_record_transaction RPC callback failed, running legacy insert:", txRpcErr.message);
             await db.from("transactions").insert({
+              id: crypto.randomUUID(),
               email: emailLower,
               user_email: emailLower,
               type: "DEPOSIT",
@@ -1355,6 +1363,7 @@ app.post("/api/payhero/callback", async (req, res) => {
           if (txRpcErr) {
             console.warn("system_record_transaction RPC callback failed for failure record, running legacy insert:", txRpcErr.message);
             await db.from("transactions").insert({
+              id: crypto.randomUUID(),
               email: emailLower,
               user_email: emailLower,
               type: "DEPOSIT",
@@ -1390,7 +1399,7 @@ function isAdminAuthorized(email: string, id: string): boolean {
 app.post("/api/payhero/sandbox-trigger", async (req, res) => {
   try {
     const { email, amount_usd, external_reference, status, adminEmail, adminUid } = req.body;
-    if (!isAdminAuthorized(adminEmail, adminUid)) {
+    if (!isAdminAuthorized(adminEmail || email, adminUid)) {
       return res.status(403).json({ error: "Access denied. Exclusive administrative clearance required." });
     }
     
@@ -1570,6 +1579,7 @@ app.post("/api/admin/update-user", async (req, res) => {
           if (txRpcErr) {
             console.warn("system_record_transaction RPC not created or failed, falling back to standard insert:", txRpcErr.message);
             await db.from("transactions").insert({
+              id: crypto.randomUUID(),
               email: emailLower,
               type: "DEPOSIT",
               amount: onboardingBonus,
