@@ -19,7 +19,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   // Polling STK Push States
   const [stkReference, setStkReference] = useState<string | null>(null);
   const [stkStatus, setStkStatus] = useState<'PENDING' | 'COMPLETED' | 'FAILED' | 'TIMEOUT'>('PENDING');
-  const [pollSecondsLeft, setPollSecondsLeft] = useState(180);
+  const [pollSecondsLeft, setPollSecondsLeft] = useState(10);
   const [stkUsdValue, setStkUsdValue] = useState(0);
   const [stkPhoneValue, setStkPhoneValue] = useState('');
 
@@ -113,9 +113,15 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
               address: `STK Ref: ${stkReference.slice(-10)}`,
               phone: stkPhoneValue
             });
-          } else if (cleanStatus === 'FAILED' || cleanStatus === 'CANCELLED') {
+          } else if (
+            cleanStatus === 'FAILED' || 
+            cleanStatus === 'CANCELLED' || 
+            cleanStatus === 'REJECTED' || 
+            cleanStatus === 'DECLINED' || 
+            cleanStatus === 'ERROR'
+          ) {
             setStkStatus('FAILED');
-            addToast("M-Pesa transaction was Cancelled or Failed.", "ERROR");
+            addToast(`M-Pesa transaction failed or was rejected. Status: ${cleanStatus}`, "ERROR");
           }
         }
       } catch (err) {
@@ -198,7 +204,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         setStkUsdValue(usd);
         setStkPhoneValue(mpesaPhone);
         setStkStatus('PENDING');
-        setPollSecondsLeft(180);
+        setPollSecondsLeft(10);
         
         addToast("STK push sent! Please unlock your phone and enter your M-Pesa PIN.", "SUCCESS");
       } else {
@@ -374,6 +380,11 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     <p className="text-gray-400 text-[10px] leading-relaxed max-w-xs">
                       Safaricom network STK push dispatched! Enter your 4-digit M-Pesa PIN on your phone handset to clear the payment transaction.
                     </p>
+                    <div className="pt-2">
+                      <span className="inline-block text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        ⏳ Auto-closing in: {pollSecondsLeft}s
+                      </span>
+                    </div>
                   </div>
 
                   {/* Dev Action Buttons to Force-Simulate Callback in Sandbox/Testing */}
@@ -477,7 +488,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-amber-500 text-xs font-bold uppercase tracking-widest">TRANSACTION TIMED OUT</h3>
                     <p className="text-gray-400 text-xxs leading-relaxed max-w-sm font-semibold">
-                      We did not receive any callback response from Safaricom carrier within 90 seconds.
+                      We did not receive any callback response from Safaricom carrier within 10 seconds.
                     </p>
                   </div>
 
