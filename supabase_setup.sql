@@ -576,7 +576,7 @@ BEGIN
     IF FOUND THEN
         IF clean_type = 'WITHDRAWAL' THEN
             current_bal := COALESCE(current_bal, 0) - tx_amount;
-        ELSIF clean_type = 'DEPOSIT' AND (clean_status = 'COMPLETED' OR clean_status = 'SUCCESS' OR clean_status = 'SUCCESSFUL') THEN
+        ELSIF clean_type = 'DEPOSIT' AND (UPPER(clean_status) = 'COMPLETED' OR UPPER(clean_status) = 'SUCCESS' OR UPPER(clean_status) = 'SUCCESSFUL') THEN
             current_bal := COALESCE(current_bal, 0) + tx_amount;
             current_dep := COALESCE(current_dep, 0) + tx_amount;
         END IF;
