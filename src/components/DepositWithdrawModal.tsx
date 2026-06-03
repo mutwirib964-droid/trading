@@ -19,7 +19,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   // Polling STK Push States
   const [stkReference, setStkReference] = useState<string | null>(null);
   const [stkStatus, setStkStatus] = useState<'PENDING' | 'COMPLETED' | 'FAILED' | 'TIMEOUT'>('PENDING');
-  const [pollSecondsLeft, setPollSecondsLeft] = useState(90);
+  const [pollSecondsLeft, setPollSecondsLeft] = useState(180);
   const [stkUsdValue, setStkUsdValue] = useState(0);
   const [stkPhoneValue, setStkPhoneValue] = useState('');
 
@@ -198,7 +198,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         setStkUsdValue(usd);
         setStkPhoneValue(mpesaPhone);
         setStkStatus('PENDING');
-        setPollSecondsLeft(90);
+        setPollSecondsLeft(180);
         
         addToast("STK push sent! Please unlock your phone and enter your M-Pesa PIN.", "SUCCESS");
       } else {

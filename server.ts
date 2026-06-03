@@ -1139,26 +1139,32 @@ app.post("/api/payhero/callback", async (req, res) => {
       return res.status(400).json({ error: "No external reference found in webhook payload." });
     }
 
+    const inner = body.response || body.Response || body.data || {};
+
     const statusVal = 
-      body.status || 
-      body.Status || 
-      body.ResultCode ||
-      (body.Response && (body.Response.status || body.Response.Status)) ||
-      (body.data && (body.data.status || body.data.Status));
+      body.status !== undefined && typeof body.status !== 'boolean' ? body.status : (
+        inner.status || 
+        inner.Status || 
+        inner.ResultCode || 
+        body.ResultCode || 
+        body.status
+      );
 
     const amount = 
       body.amount || 
       body.Amount || 
-      (body.Response && (body.Response.amount || body.Response.Amount)) ||
-      (body.data && (body.data.amount || body.data.Amount));
+      inner.amount || 
+      inner.Amount;
 
     const mpesa_code = 
       body.mpesa_code || 
       body.MpesaCode || 
       body.mpesa_receipt_number || 
       body.MpesaReceiptNumber || 
-      (body.Response && (body.Response.mpesa_code || body.Response.MpesaReceiptNumber)) ||
-      (body.data && (body.data.mpesa_code || body.data.MpesaReceiptNumber));
+      inner.mpesa_code || 
+      inner.MpesaCode || 
+      inner.mpesa_receipt_number || 
+      inner.MpesaReceiptNumber;
 
     // Decode user email from reference
     const parts = String(external_reference).split("__");
@@ -1182,27 +1188,40 @@ app.post("/api/payhero/callback", async (req, res) => {
       }
     }
 
-    // Check success status robustly (ResultCode = "0" means Success in Safaricom, status strings: "SUCCESS", "SUCCESSFUL", "COMPLETED")
+    // Determine success or failure robustly supporting checkout status keys
     let isSuccess = false;
-    const statusStr = String(statusVal || "").toUpperCase().trim();
-    if (
-      statusStr === "SUCCESS" || 
-      statusStr === "SUCCESSFUL" || 
-      statusStr === "COMPLETED" || 
+
+    // Helper references to check nested fields
+    const innerResultCode = inner.ResultCode !== undefined ? String(inner.ResultCode).trim() : (inner.result_code !== undefined ? String(inner.result_code).trim() : "");
+    const outerResultCode = body.ResultCode !== undefined ? String(body.ResultCode).trim() : (body.result_code !== undefined ? String(body.result_code).trim() : "");
+    const activeResultCode = innerResultCode || outerResultCode;
+
+    const innerStatusStr = String(inner.status || inner.Status || "").toUpperCase().trim();
+    const outerStatusStr = typeof body.status === 'string' ? String(body.status).toUpperCase().trim() : "";
+    const activeStatusStr = innerStatusStr || outerStatusStr;
+
+    const hasSuccessIndicator = 
+      activeStatusStr === "SUCCESS" || 
+      activeStatusStr === "SUCCESSFUL" || 
+      activeStatusStr === "COMPLETED" || 
+      activeResultCode === "0" || 
       body.success === true || 
       body.success === "true" ||
       body.Success === true ||
       body.Success === "true" ||
-      String(body.ResultCode) === "0" ||
-      String(body.result_code) === "0" ||
-      (body.Response && String(body.Response.ResultCode) === "0") ||
-      (body.data && String(body.data.ResultCode) === "0")
-    ) {
+      inner.success === true || 
+      inner.success === "true";
+
+    const isExplicitFailureCode = activeResultCode !== "" && activeResultCode !== "0";
+    const isExplicitFailureStatus = 
+      activeStatusStr === "FAILED" || 
+      activeStatusStr === "CANCELLED" || 
+      activeStatusStr === "DECLINED" || 
+      activeStatusStr === "REJECTED" || 
+      activeStatusStr === "ERROR";
+
+    if (hasSuccessIndicator && !isExplicitFailureCode && !isExplicitFailureStatus) {
       isSuccess = true;
-    }
-    // Explicitly check for Safaricom error result codes if provided
-    if (body.ResultCode !== undefined && String(body.ResultCode) !== "0" && String(body.ResultCode) !== "") {
-      isSuccess = false;
     }
 
     if (isSuccess) {
