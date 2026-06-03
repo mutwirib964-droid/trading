@@ -790,7 +790,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
             </div>
 
             <div className="my-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3.5 text-[10.5px] text-emerald-400 leading-normal">
-              <span className="font-bold block mb-0.5 uppercase tracking-wide">M-PESA PAYHERO API EMULATOR</span>
+              <span className="font-bold block mb-0.5 uppercase tracking-wide">M-PESA INSTANT GATEWAY API EMULATOR</span>
               Dispatches a simulated Safaricom Instant Webhook reference notification. This will verify real-time deposit ledger loops seamlessly and allocate real credit!
             </div>
 

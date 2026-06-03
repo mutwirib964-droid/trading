@@ -2050,9 +2050,20 @@ export default function App() {
                                 <p className="text-gray-500 text-[8px]">{new Date(tx.date).toLocaleDateString()}</p>
                               </div>
                             </div>
-                            <span className={`font-bold ${tx.type === 'DEPOSIT' || tx.type === 'COPY_RELEASE' || tx.type === 'REDEEM' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {tx.type === 'DEPOSIT' || tx.type === 'COPY_RELEASE' || tx.type === 'REDEEM' ? '+' : '-'}${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </span>
+                            <div className="text-right flex flex-col items-end gap-1 font-mono">
+                              <span className={`font-bold ${tx.type === 'DEPOSIT' || tx.type === 'COPY_RELEASE' || tx.type === 'REDEEM' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {tx.type === 'DEPOSIT' || tx.type === 'COPY_RELEASE' || tx.type === 'REDEEM' ? '+' : '-'}${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border ${
+                                ['COMPLETED', 'SUCCESS', 'SUCCESSFUL'].includes(tx.status)
+                                  ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' 
+                                  : ['FAILED', 'DECLINED', 'CANCELLED'].includes(tx.status)
+                                  ? 'bg-rose-950/20 border-rose-500/30 text-rose-400'
+                                  : 'bg-amber-950/25 border-amber-500/20 text-amber-500'
+                              }`}>
+                                {tx.status}
+                              </span>
+                            </div>
                           </div>
                         ))}
                       </div>

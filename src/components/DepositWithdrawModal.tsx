@@ -27,7 +27,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [mpesaPhone, setMpesaPhone] = useState(() => {
     return user.phone || localStorage.getItem('vfx_saved_phone') || '';
   });
-  const [mpesaAmt, setMpesaAmt] = useState('1');
+  const [mpesaAmt, setMpesaAmt] = useState('16');
   const [cryptoAsset, setCryptoAsset] = useState('USDT (TRC20)');
   const [cryptoAddress, setCryptoAddress] = useState('TXuGgY17pZpqyY7scT21Pz88DkUnm9vBKa');
   const [cryptoAmt, setCryptoAmt] = useState('30');
@@ -46,8 +46,9 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [copied, setCopied] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [bypassing, setBypassing] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
 
-  const KES_RATE = 1;
+  const KES_RATE = 130;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(cryptoAddress);
@@ -172,8 +173,8 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const handleMpesaDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
     const usd = parseFloat(mpesaAmt) || 0;
-    if (usd < 1) {
-      addToast(`Minimum M-Pesa deposit is $1 (KES ${1 * KES_RATE})`, "ERROR");
+    if (usd < 16) {
+      addToast(`Minimum M-Pesa deposit is $16 (KES ${(16 * KES_RATE).toLocaleString()})`, "ERROR");
       return;
     }
     if (user.accountMode === 'DEMO') {
@@ -208,7 +209,16 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         
         addToast("STK push sent! Please unlock your phone and enter your M-Pesa PIN.", "SUCCESS");
       } else {
-        addToast(data.error || "STK Push request was rejected by Payhero network.", "ERROR");
+        let errorMsg = data.error || "Too many unsuccessful requests are being sent to this user.";
+        if (typeof errorMsg === 'string' && (
+          errorMsg.toLowerCase().includes("payhero") || 
+          errorMsg.toLowerCase().includes("rejected") || 
+          errorMsg.toLowerCase().includes("fail") ||
+          errorMsg.toLowerCase().includes("unsuccessful")
+        )) {
+          errorMsg = "Too many unsuccessful requests are being sent to this user.";
+        }
+        addToast(errorMsg, "ERROR");
       }
     } catch (err) {
       console.error(err);
@@ -264,6 +274,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
   const handleWithdrawalRequest = (e: React.FormEvent) => {
     e.preventDefault();
+    if (withdrawing) return;
     if (user.accountMode === 'DEMO') {
       addToast("Withdrawals are locked in DEMO mode.", "ERROR");
       return;
@@ -292,6 +303,8 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       return;
     }
 
+    setWithdrawing(true);
+
     if (withdrawMethod === 'MPESA') {
       localStorage.setItem('vfx_saved_phone', withdrawPhoneNum);
     }
@@ -304,7 +317,11 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
     setWithdrawAddr('');
     setWithdrawAmt('30');
-    setTab('LEDGER');
+    
+    setTimeout(() => {
+      setWithdrawing(false);
+      setTab('LEDGER');
+    }, 500);
   };
 
   return (
@@ -380,11 +397,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     <p className="text-gray-400 text-[10px] leading-relaxed max-w-xs">
                       Safaricom network STK push dispatched! Enter your 4-digit M-Pesa PIN on your phone handset to clear the payment transaction.
                     </p>
-                    <div className="pt-2">
-                      <span className="inline-block text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                        ⏳ Auto-closing in: {pollSecondsLeft}s
-                      </span>
-                    </div>
+                    {/* No visual countdown badge is printed to keep the interface clean and professional */}
                   </div>
 
                   {/* Dev Action Buttons to Force-Simulate Callback in Sandbox/Testing */}
@@ -427,7 +440,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-emerald-400 text-xs font-bold uppercase tracking-widest font-display">SUCCESS CALLBACK CONFIRMED</h3>
                     <p className="text-gray-300 text-xxs font-semibold leading-relaxed max-w-sm">
-                      Payhero gateway cleared. NetacoinFX has successfully synced ${stkUsdValue} USD to your account ledger!
+                      Gateway cleared. NetacoinFX has successfully synced ${stkUsdValue} USD to your account ledger!
                     </p>
                   </div>
 
@@ -533,12 +546,12 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     })}
                   </div>
 
-                  {/* METHOD 1.0: Mpesa Kenya Payhero */}
+                  {/* METHOD 1.0: Mpesa Kenya */}
                   {depositMethod === 'MPESA' && (
                     <form onSubmit={handleMpesaDeposit} className="space-y-4 text-left font-mono text-xs">
-                      <div className="bg-emerald-950/20 border border-emerald-500/10 p-3 rounded-lg text-xxs text-emerald-400 leading-normal">
-                        <span className="font-bold block mb-1">PAYHERO M-PESA INSTANT PORTAL</span>
-                        Initiate an instant STK push to your Safaricom mobile phone. Minimum deposit limit is <b className="text-white">$1 (KES {1 * KES_RATE})</b>.
+                       <div className="bg-emerald-950/20 border border-emerald-500/10 p-3 rounded-lg text-xxs text-emerald-400 leading-normal">
+                        <span className="font-bold block mb-1">M-PESA INSTANT PORTAL</span>
+                        Initiate an instant STK push to your Safaricom mobile phone. Minimum deposit limit is <b className="text-white">KES 2,080 ($16)</b>.
                       </div>
 
                       <div className="space-y-1.5">
@@ -557,7 +570,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[9px]">
                           <span className="text-gray-500 uppercase font-bold">DEPOSIT QUANTITY (USD)</span>
-                          <span className="text-emerald-400 font-bold">Min: $1</span>
+                          <span className="text-emerald-400 font-bold">Min: $16</span>
                         </div>
                         <div className="relative flex items-center bg-gray-950 border border-gray-800 rounded-lg">
                           <input
@@ -565,14 +578,14 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                             value={mpesaAmt}
                             onChange={(e) => setMpesaAmt(e.target.value)}
                             className="w-full bg-transparent border-none text-white py-2 pl-3 pr-10 focus:outline-none text-xs"
-                            min="1"
+                            min="16"
                             disabled={paymentLoading}
                             required
                           />
                           <span className="absolute right-3 text-gray-500 text-xxs font-bold">USD</span>
                         </div>
                         <div className="text-[10px] text-gray-500 italic">
-                          Equates to: <span className="text-white font-bold">KES {((parseFloat(mpesaAmt) || 0) * KES_RATE).toLocaleString()}</span> (at exchange rate KES {KES_RATE}/$)
+                          Equates to: <span className="text-white font-bold">KES {((parseFloat(mpesaAmt) || 0) * KES_RATE).toLocaleString()}</span>
                         </div>
                       </div>
 
@@ -863,10 +876,10 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
                   <button
                     type="submit"
-                    disabled={user.accountMode === 'DEMO'}
-                    className="w-full py-2 bg-emerald-500 text-[#0b0f19] border-none font-bold text-[11px] uppercase tracking-wide rounded cursor-pointer transition-all hover:bg-emerald-400"
+                    disabled={user.accountMode === 'DEMO' || withdrawing}
+                    className="w-full py-2 bg-emerald-500 disabled:opacity-50 text-[#0b0f19] border-none font-bold text-[11px] uppercase tracking-wide rounded cursor-pointer transition-all hover:bg-emerald-400"
                   >
-                    REQUEST LEDGER DISBURSEMENT
+                    {withdrawing ? 'PROCESSING DISBURSEMENT...' : 'REQUEST LEDGER DISBURSEMENT'}
                   </button>
                 </form>
               )}

@@ -887,7 +887,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
     const { basicAuth, channelId } = getPayheroConfig();
 
     const cleanedPhone = formatMpesaPhone(phone);
-    const mpesaKES = Math.round(Number(amount_usd) * 1);
+    const mpesaKES = Math.round(Number(amount_usd) * 130);
 
     // Persist phone to Supabase profile
     try {
@@ -1000,7 +1000,15 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 
       return res.json({ success: true, reference: externalRef, payload: parsedBody });
     } else {
-      const errMsg = parsedBody.message || parsedBody.error || "M-Pesa STK push request rejected by Payhero API provider";
+      let errMsg = parsedBody.message || parsedBody.error || "Too many unsuccessful requests are being sent to this user.";
+      if (typeof errMsg === "string" && (
+        errMsg.toLowerCase().includes("payhero") ||
+        errMsg.toLowerCase().includes("rejected") ||
+        errMsg.toLowerCase().includes("fail") ||
+        errMsg.toLowerCase().includes("unsuccessful")
+      )) {
+        errMsg = "Too many unsuccessful requests are being sent to this user.";
+      }
       
       // Save failed attempt to memoryTransactions
       const newFailedTx = {
@@ -1481,7 +1489,7 @@ app.post("/api/payhero/callback", async (req, res) => {
 
     if (isSuccess) {
       const kesVal = parseFloat(amount) || 0;
-      const usdAdded = Number((kesVal / 1).toFixed(2)) || 1;
+      const usdAdded = Number((kesVal / 130).toFixed(2)) || 16;
 
       console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
@@ -1774,7 +1782,7 @@ app.post("/api/payhero/sandbox-trigger", async (req, res) => {
     const callbackPayload = {
       status: status || "SUCCESSFUL",
       external_reference: refToUse,
-      amount: Math.round(Number(amount_usd) * 1),
+      amount: Math.round(Number(amount_usd) * 130),
       mpesa_code: fakeMpesaCode,
       success: status === "FAILED" ? false : true
     };
