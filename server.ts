@@ -770,26 +770,49 @@ app.get("/api/payhero/check-status", async (req, res) => {
     // Always check Supabase first to get real-time source-of-truth status
     const db = getSupabase();
     if (db) {
-      // 1. Try matching the exact reference column or fallback to address text
-      const { data: profileTxs } = await db.from("transactions")
+      console.log(`[Status Poll] Querying database for reference: "${reference}"`);
+      
+      // Query 1: Clean and direct query by reference column (immune to PostgREST .or syntax/space parsing issues)
+      const { data: refTxs, error: refErr } = await db.from("transactions")
         .select("*")
-        .or(`reference.eq.${reference},address.eq.M-Pesa IPN Ref: ${reference},address.eq.IPN Ref: ${reference},address.like.%${reference}%`)
+        .eq("reference", reference)
         .order("created_at", { ascending: false })
         .limit(1);
 
-      let profileTx = profileTxs?.[0];
+      if (refErr) {
+        console.error("[Status Poll] Direct reference search failed:", refErr.message);
+      }
 
-      // 2. Fallback: Search for any completed deposit for this user email created since we triggered the STK push
+      let profileTx = refTxs?.[0];
+
+      // Query 2 fallback: Try safe like comparison on address text
+      if (!profileTx) {
+        const { data: addressTxs, error: addressErr } = await db.from("transactions")
+          .select("*")
+          .like("address", `%${reference}%`)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (addressErr) {
+          console.error("[Status Poll] Fallback address search failed:", addressErr.message);
+        } else {
+          profileTx = addressTxs?.[0];
+        }
+      }
+
+      // Query 3 fallback: Search for any completed deposit for this user email created since we triggered the STK push
       if (!profileTx && emailLower) {
         console.log(`[Status Poll Fallback] Searching alternative transactions for ${emailLower} since ${startTime ? startTime.toISOString() : 'beginning'}`);
-        const { data: recentTxs } = await db.from("transactions")
+        const { data: recentTxs, error: fallbackErr } = await db.from("transactions")
           .select("*")
           .eq("email", emailLower)
           .eq("type", "DEPOSIT")
           .in("status", ["COMPLETED", "SUCCESS", "SUCCESSFUL"])
           .order("created_at", { ascending: false });
 
-        if (recentTxs && recentTxs.length > 0) {
+        if (fallbackErr) {
+          console.error("[Status Poll Fallback] Recent Tx query failed:", fallbackErr.message);
+        } else if (recentTxs && recentTxs.length > 0) {
           if (startTime) {
             profileTx = recentTxs.find(tx => {
               const txDate = new Date(tx.created_at);
@@ -1095,7 +1118,59 @@ app.post("/api/payhero/callback", async (req, res) => {
     const body = req.body || {};
     console.log("RECEIVED PAYHERO WEBHOOK CONTRACT:", JSON.stringify(body));
 
-    // Support nested, lowercase, uppercase properties from PayHero Gateway variants
+    const inner = body.response || body.Response || body.data || {};
+
+    // Helper functions for recursive scanning to handle highly dynamic/mutilated payloads
+    const findEncodedReferenceRecursive = (val: any): string | null => {
+      if (!val) return null;
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (trimmed.includes("_at_") && trimmed.includes("_dot_") && trimmed.includes("__")) {
+          return trimmed;
+        }
+        if (trimmed.includes("@") && trimmed.includes("__")) {
+          return trimmed;
+        }
+      }
+      if (typeof val === 'object') {
+        for (const k of Object.keys(val)) {
+          const res = findEncodedReferenceRecursive(val[k]);
+          if (res) return res;
+        }
+      }
+      return null;
+    };
+
+    const findEmailInPayloadRecursive = (val: any): string | null => {
+      if (!val) return null;
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (trimmed.includes("@") && trimmed.includes(".") && trimmed.length > 5) {
+          const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+          const match = trimmed.match(emailRegex);
+          if (match) return match[0];
+        }
+      }
+      if (typeof val === 'object') {
+        for (const k of Object.keys(val)) {
+          const res = findEmailInPayloadRecursive(val[k]);
+          if (res) return res;
+        }
+      }
+      return null;
+    };
+
+    const formatMpesaPhone = (p: string): string => {
+      let cleaned = p.replace(/\D/g, "");
+      if (cleaned.startsWith("0")) {
+        cleaned = "254" + cleaned.substring(1);
+      } else if (cleaned.startsWith("7") || cleaned.startsWith("1")) {
+        cleaned = "254" + cleaned;
+      }
+      return cleaned;
+    };
+
+    // Candidates for reference field checking
     const candidates = [
       body.external_reference,
       body.ExternalReference,
@@ -1112,19 +1187,60 @@ app.post("/api/payhero/callback", async (req, res) => {
       body.data?.ExternalRef,
       body.ref,
       body.Reference,
-      body.reference
+      body.reference,
+      body.CheckoutRequestID,
+      body.checkout_request_id,
+      body.response?.CheckoutRequestID,
+      body.response?.checkout_request_id
     ];
 
-    // Priority 1: Match any candidate containing our standard email encoding template ("__") or raw email ("@")
-    let external_reference = "";
-    for (const val of candidates) {
-      if (val && typeof val === 'string' && (val.includes("__") || val.includes("@"))) {
-        external_reference = val;
-        break;
-      }
+    const phoneCandidates = [
+      body.phone_number,
+      body.phone,
+      body.Phone,
+      body.PhoneNumber,
+      body.msisdn,
+      body.MSISDN,
+      body.Msisdn,
+      inner.phone_number,
+      inner.phone,
+      inner.Phone,
+      inner.PhoneNumber,
+      inner.msisdn,
+      inner.MSISDN,
+      inner.Msisdn,
+      body.response?.phone,
+      body.response?.MSISDN,
+      inner.Source
+    ];
+
+    const billRefCandidates = [
+      body.BillRefNumber,
+      body.bill_ref_number,
+      body.billref,
+      body.account_number,
+      body.AccountNo,
+      body.Account,
+      inner.BillRefNumber,
+      inner.bill_ref_number,
+      inner.AccountNo,
+      inner.Account
+    ];
+
+    const db = getSupabase();
+
+    // Priority 1: Match standard external reference using recursive locator
+    let external_reference = findEncodedReferenceRecursive(body) || "";
+    let emailLower = "";
+
+    if (external_reference) {
+      const parts = String(external_reference).split("__");
+      const rawEmail = parts[0];
+      const email = rawEmail.replace(/_at_/g, "@").replace(/_dot_/g, ".");
+      emailLower = email.toLowerCase().trim();
     }
 
-    // Priority 2: Fallback to the first non-empty candidate if no structured candidate is found
+    // Priority 2: If no structured recursive match, use direct candidates list
     if (!external_reference) {
       for (const val of candidates) {
         if (val) {
@@ -1134,12 +1250,115 @@ app.post("/api/payhero/callback", async (req, res) => {
       }
     }
 
-    if (!external_reference) {
-      console.warn("Rejected callback because no external_reference was found in raw payload.");
-      return res.status(400).json({ error: "No external reference found in webhook payload." });
+    // Priority 3: Extract email from payload recursively (e.g. if passed as raw string in some field)
+    if (!emailLower) {
+      const fallbackEmail = findEmailInPayloadRecursive(body);
+      if (fallbackEmail) {
+        emailLower = fallbackEmail.toLowerCase().trim();
+        console.log(`[Callback Processing] Extracted email recursively from payload: "${emailLower}"`);
+      }
     }
 
-    const inner = body.response || body.Response || body.data || {};
+    // Priority 4: Look up on database using candidates list (if we have a reference that isn't our template)
+    if ((!emailLower || !emailLower.includes("@")) && external_reference && db) {
+      console.log(`[Callback Processing] Attempting DB lookup for reference "${external_reference}"...`);
+      const { data: matchedTxs } = await db.from("transactions")
+        .select("email, user_email")
+        .or(`reference.eq.${external_reference},address.like.%${external_reference}%`)
+        .limit(1);
+
+      if (matchedTxs && matchedTxs[0]) {
+         emailLower = (matchedTxs[0].email || matchedTxs[0].user_email || "").toLowerCase().trim();
+         console.log(`[Callback Processing] Resolved email from DB transaction matching reference: "${emailLower}"`);
+      }
+    }
+
+    // Priority 5: Scan any account number / BillRefNumber candidates for email
+    if (!emailLower || !emailLower.includes("@")) {
+      for (const billRef of billRefCandidates) {
+        if (!billRef) continue;
+        const s = String(billRef).trim();
+        if (s.includes("@") && s.includes(".")) {
+          emailLower = s.toLowerCase().trim();
+          console.log(`[Callback Processing] Resolved email from BillRefNumber: "${emailLower}"`);
+          break;
+        }
+      }
+    }
+
+    // Priority 6: Resolve user via profile matching phone number
+    if ((!emailLower || !emailLower.includes("@")) && db) {
+      for (const rawPhone of phoneCandidates) {
+        if (!rawPhone) continue;
+        const formatted = formatMpesaPhone(String(rawPhone));
+        if (formatted) {
+          const { data: pData } = await db.from("profiles")
+            .select("email")
+            .eq("phone", formatted)
+            .limit(1);
+          if (pData && pData[0]) {
+            emailLower = (pData[0].email || "").toLowerCase().trim();
+            console.log(`[Callback Processing] Resolved email from profile matching phone "${formatted}": "${emailLower}"`);
+            break;
+          }
+        }
+      }
+    }
+
+    // Priority 7: If the user is STILL not resolved, check recently pending transactions matching this phone or amount
+    if ((!emailLower || !emailLower.includes("@")) && db) {
+      console.log(`[Callback Processing] Fallback matching by recent PENDING transactions...`);
+      for (const rawPhone of phoneCandidates) {
+        if (!rawPhone) continue;
+        const formatted = formatMpesaPhone(String(rawPhone));
+        if (formatted) {
+          const { data: pendingTxs } = await db.from("transactions")
+            .select("email, user_email, reference")
+            .eq("status", "PENDING")
+            .like("address", `%${formatted}%`)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (pendingTxs && pendingTxs[0]) {
+            emailLower = (pendingTxs[0].email || pendingTxs[0].user_email || "").toLowerCase().trim();
+            external_reference = pendingTxs[0].reference || external_reference;
+            console.log(`[Callback Processing] Matched pending transaction by phone "${formatted}": user="${emailLower}", ref="${external_reference}"`);
+            break;
+          }
+        }
+      }
+    }
+
+    // Priority 8: Final Absolute Fallback: find the single most recent pending transaction in the DB
+    if ((!emailLower || !emailLower.includes("@")) && db) {
+      const { data: absoluteRecentPending } = await db.from("transactions")
+        .select("email, user_email, reference")
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (absoluteRecentPending && absoluteRecentPending[0]) {
+        emailLower = (absoluteRecentPending[0].email || absoluteRecentPending[0].user_email || "").toLowerCase().trim();
+        external_reference = absoluteRecentPending[0].reference || external_reference;
+        console.log(`[Callback Processing] Absolute Fallback: Matched single most recent pending transaction: user="${emailLower}", ref="${external_reference}"`);
+      }
+    }
+
+    // Ensure we have some reference to prevent DB insert issues
+    if (!external_reference) {
+      const mpesa_receipt = 
+        body.mpesa_code || 
+        body.MpesaCode || 
+        body.mpesa_receipt_number || 
+        body.MpesaReceiptNumber || 
+        inner.mpesa_code || 
+        inner.MpesaCode;
+      
+      external_reference = mpesa_receipt ? `C2B_${mpesa_receipt}` : `PAYHERO_IPN_${Date.now()}`;
+    }
+
+    if (!emailLower || !emailLower.includes("@")) {
+      console.warn("Rejected callback because no valid target user could be resolved from raw payload:", JSON.stringify(body));
+      return res.status(400).json({ error: "Could not resolve target user email from webhook payload." });
+    }
 
     const statusVal = 
       body.status !== undefined && typeof body.status !== 'boolean' ? body.status : (
@@ -1164,34 +1383,16 @@ app.post("/api/payhero/callback", async (req, res) => {
       inner.mpesa_code || 
       inner.MpesaCode || 
       inner.mpesa_receipt_number || 
-      inner.MpesaReceiptNumber;
-
-    // Decode user email from reference
-    const parts = String(external_reference).split("__");
-    const rawEmail = parts[0];
-    const email = rawEmail.replace(/_at_/g, "@").replace(/_dot_/g, ".");
-    let emailLower = email.toLowerCase().trim();
-
-    const db = getSupabase();
-
-    // Extra Safe Check: If emailLower doesn't look like a valid email, look up the pending transaction in Supabase
-    if (!emailLower.includes("@") && db) {
-      console.log(`[Callback Processing] Decoded key "${emailLower}" is not a valid email address. Resolving from database transaction reference...`);
-      const { data: matchedTxs } = await db.from("transactions")
-        .select("email, user_email")
-        .or(`reference.eq.${external_reference},reference.eq.${emailLower},address.eq.M-Pesa IPN Ref: ${external_reference},address.like.%${external_reference}%,address.like.%${emailLower}%`)
-        .limit(1);
-
-      if (matchedTxs && matchedTxs[0]) {
-        emailLower = (matchedTxs[0].email || matchedTxs[0].user_email || "").toLowerCase().trim();
-        console.log(`[Callback Processing] Successfully recovered user email: "${emailLower}"`);
-      }
-    }
+      inner.MpesaReceiptNumber ||
+      inner.MpesaReceiptNo ||
+      body.MpesaReceiptNo ||
+      body.response?.MpesaReceiptNumber ||
+      body.response?.MpesaCode ||
+      body.response?.MpesaReceiptNo;
 
     // Determine success or failure robustly supporting checkout status keys
     let isSuccess = false;
 
-    // Helper references to check nested fields
     const innerResultCode = inner.ResultCode !== undefined ? String(inner.ResultCode).trim() : (inner.result_code !== undefined ? String(inner.result_code).trim() : "");
     const outerResultCode = body.ResultCode !== undefined ? String(body.ResultCode).trim() : (body.result_code !== undefined ? String(body.result_code).trim() : "");
     const activeResultCode = innerResultCode || outerResultCode;
@@ -1200,20 +1401,44 @@ app.post("/api/payhero/callback", async (req, res) => {
     const outerStatusStr = typeof body.status === 'string' ? String(body.status).toUpperCase().trim() : "";
     const activeStatusStr = innerStatusStr || outerStatusStr;
 
-    const hasSuccessIndicator = 
-      activeStatusStr === "SUCCESS" || 
-      activeStatusStr === "SUCCESSFUL" || 
-      activeStatusStr === "COMPLETED" || 
-      activeResultCode === "0" || 
-      body.success === true || 
+    const isStatusTrue = 
+      body.status === true || 
+      body.status === "true" || 
+      inner.status === true || 
+      inner.status === "true" ||
+      inner.Status === true ||
+      inner.Status === "true" ||
+      body.success === true ||
       body.success === "true" ||
       body.Success === true ||
       body.Success === "true" ||
-      inner.success === true || 
+      inner.success === true ||
       inner.success === "true";
+
+    const isStatusFalse = 
+      body.status === false || 
+      body.status === "false" || 
+      inner.status === false || 
+      inner.status === "false" ||
+      inner.Status === false ||
+      inner.Status === "false" ||
+      body.success === false ||
+      body.success === "false" ||
+      body.Success === false ||
+      body.Success === "false" ||
+      inner.success === false ||
+      inner.success === "false";
+
+    const hasSuccessIndicator = 
+      isStatusTrue ||
+      activeStatusStr === "SUCCESS" || 
+      activeStatusStr === "SUCCESSFUL" || 
+      activeStatusStr === "COMPLETED" || 
+      activeResultCode === "0";
 
     const isExplicitFailureCode = activeResultCode !== "" && activeResultCode !== "0";
     const isExplicitFailureStatus = 
+      isStatusFalse ||
       activeStatusStr === "FAILED" || 
       activeStatusStr === "CANCELLED" || 
       activeStatusStr === "DECLINED" || 
@@ -1231,16 +1456,36 @@ app.post("/api/payhero/callback", async (req, res) => {
       console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
       // 1. Credit Supabase if ONLINE
-      if (db && emailLower.includes("@")) {
+      if (db) {
         // First try to look up the existing pending transaction to update it
-        const { data: existingTxs } = await db.from("transactions")
+        let { data: existingTxs } = await db.from("transactions")
           .select("id, status")
           .eq("reference", external_reference)
           .limit(1);
 
+        // Fallback search by matching phone address text
+        if (!existingTxs || existingTxs.length === 0) {
+          const { data: fallbackAddrTxs } = await db.from("transactions")
+            .select("id, status")
+            .like("address", `%${external_reference}%`)
+            .limit(1);
+          existingTxs = fallbackAddrTxs;
+        }
+
+        // Fallback search by current user's most recent pending transaction
+        if ((!existingTxs || existingTxs.length === 0) && emailLower) {
+          const { data: fallbackPendingTxs } = await db.from("transactions")
+            .select("id, status")
+            .eq("email", emailLower)
+            .eq("status", "PENDING")
+            .order("created_at", { ascending: false })
+            .limit(1);
+          existingTxs = fallbackPendingTxs;
+        }
+
         const existingTx = existingTxs?.[0];
 
-        // Invoke credit bypass RPC
+        // Invoke credit bypass RPC to deposit real balance on profile
         const { error: creditRpcErr } = await db.rpc("system_credit_user", {
           secure_token: 'payhero_system_clear_token_vfx',
           target_email: emailLower,
@@ -1262,7 +1507,6 @@ app.post("/api/payhero/callback", async (req, res) => {
         }
 
         if (existingTx) {
-          // Update the pending transaction status instead of adding duplicate records
           console.log(`[Callback Processing] Updating existing transaction status to COMPLETED for reference: ${external_reference}`);
           await db.from("transactions").update({
             status: "COMPLETED",
@@ -1310,7 +1554,7 @@ app.post("/api/payhero/callback", async (req, res) => {
         memUser.total_deposited = Number((memUser.total_deposited + usdAdded).toFixed(2));
       }
 
-      // Update the pending transaction status if it already exists
+      // Update memoryTransactions list status
       const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
       if (txIndex !== -1) {
         memoryTransactions[txIndex].status = "COMPLETED";
@@ -1350,13 +1594,32 @@ app.post("/api/payhero/callback", async (req, res) => {
         } as any);
       }
       
-      const db = getSupabase();
       if (db) {
         // First try to check if there is an existing pending transaction to update it to FAILED
-        const { data: existingTxs } = await db.from("transactions")
+        let { data: existingTxs } = await db.from("transactions")
           .select("id, status")
           .eq("reference", external_reference || "")
           .limit(1);
+
+        // Fallback matching address text
+        if (!existingTxs || existingTxs.length === 0) {
+          const { data: fallbackAddrTxs } = await db.from("transactions")
+            .select("id, status")
+            .like("address", `%${external_reference}%`)
+            .limit(1);
+          existingTxs = fallbackAddrTxs;
+        }
+
+        // Fallback matching current user's most recent pending transaction
+        if ((!existingTxs || existingTxs.length === 0) && emailLower) {
+          const { data: fallbackPendingTxs } = await db.from("transactions")
+            .select("id, status")
+            .eq("email", emailLower)
+            .eq("status", "PENDING")
+            .order("created_at", { ascending: false })
+            .limit(1);
+          existingTxs = fallbackPendingTxs;
+        }
 
         const existingTx = existingTxs?.[0];
         if (existingTx) {
