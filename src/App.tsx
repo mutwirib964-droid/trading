@@ -737,6 +737,19 @@ export default function App() {
     // 6. Set Transactions if synced contains transaction database records
     if (synced.transactions) {
       setTransactions((prevTxs) => {
+        // Show clean toast notifications for withdrawals that completed database-side
+        synced.transactions.forEach((svrTx: any) => {
+          if (svrTx.type === 'WITHDRAWAL' && (svrTx.status === 'COMPLETED' || svrTx.status === 'completed')) {
+            const matchLocalPending = prevTxs.find((localTx) => 
+              (localTx.id === svrTx.id && localTx.status === 'PENDING') ||
+              (localTx.type === 'WITHDRAWAL' && localTx.status === 'PENDING' && localTx.amount === svrTx.amount && Math.abs(new Date(localTx.date).getTime() - new Date(svrTx.date).getTime()) < 35000)
+            );
+            if (matchLocalPending) {
+              addToast(`Your withdrawal of $${svrTx.amount.toLocaleString()} is now COMPLETED and fully settled!`, 'SUCCESS');
+            }
+          }
+        });
+
         // Retain any pending or very recent local transactions if they haven't synchronized to the server yet
         const merged = [...synced.transactions];
         
@@ -801,6 +814,7 @@ export default function App() {
             synced.walletBalance !== cur.walletBalance ||
             synced.demoBalance !== cur.demoBalance ||
             synced.isKycVerified !== cur.isKycVerified ||
+            JSON.stringify(synced.transactions || []) !== JSON.stringify(transactionsRef.current || []) ||
             JSON.stringify(synced.activePositions || []) !== JSON.stringify(cur.activePositions || []) ||
             JSON.stringify(synced.demoPositions || []) !== JSON.stringify(cur.demoPositions || []) ||
             JSON.stringify(synced.customBots || []) !== JSON.stringify(cur.customBots || []) ||
@@ -823,9 +837,8 @@ export default function App() {
 
   // Automated background processing for pending withdrawals
   useEffect(() => {
-    const isMarketer = user.role === 'marketer';
-    const thresholdSec = isMarketer ? 10 : 300; // 10 seconds for marketers, 5 minutes (300 seconds) for others
-
+    const thresholdSec = 5; // Automatically complete pending withdrawals after exactly 5 seconds
+ 
     const interval = setInterval(() => {
       setTransactions((prevTxs) => {
         let hasUpdates = false;
@@ -845,7 +858,7 @@ export default function App() {
         if (hasUpdates) {
           localStorage.setItem('vfx_transactions_ledger', JSON.stringify(nextTxs));
 
-          // Find which ones transitioned to call save-transaction endpoint on backend
+          // Find which ones transitioned to trigger clear toast message
           const transitionTxs = nextTxs.filter((tx, idx) => {
             const prev = prevTxs[idx];
             return (
@@ -856,40 +869,19 @@ export default function App() {
             );
           });
 
-          if (user.loggedIn && user.email) {
-            transitionTxs.forEach((tx) => {
-              fetch(getApiUrl("/api/user/save-transaction"), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  email: user.email,
-                  type: tx.type,
-                  amount: tx.amount,
-                  asset: tx.asset.replace('[DEMO] ', ''),
-                  address: tx.address,
-                  status: 'COMPLETED'
-                })
-              })
-                .then(() => {
-                  addToast(`Your withdrawal of $${tx.amount.toLocaleString()} is now COMPLETED and fully settled!`, 'SUCCESS');
-                })
-                .catch((err) => console.error("Error auto-completing withdrawal on server:", err));
-            });
-          } else {
-            transitionTxs.forEach((tx) => {
-              addToast(`[Demo] Withdrawal of $${tx.amount.toLocaleString()} has been processed and is now COMPLETED!`, 'SUCCESS');
-            });
-          }
+          transitionTxs.forEach((tx) => {
+            addToast(`Your withdrawal of $${tx.amount.toLocaleString()} has been processed and is now COMPLETED!`, 'SUCCESS');
+          });
 
           return nextTxs;
         }
 
         return prevTxs;
       });
-    }, 2000);
+    }, 1000);
 
     return () => clearInterval(interval);
-  }, [user.role, user.loggedIn, user.email]);
+  }, [user.loggedIn, user.email]);
 
   // Auth Operations
   const handleAuthSubmit = async (e: React.FormEvent) => {

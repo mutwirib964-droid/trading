@@ -48,6 +48,11 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
   const [bypassing, setBypassing] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
 
+  // Submit protection refs
+  const mpesaSubmitRef = React.useRef(false);
+  const withdrawSubmitRef = React.useRef(false);
+  const standardDepositSubmitRef = React.useRef(false);
+
   const KES_RATE = 130;
 
   const handleCopy = () => {
@@ -172,6 +177,8 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
   const handleMpesaDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (paymentLoading || mpesaSubmitRef.current) return;
+
     const usd = parseFloat(mpesaAmt) || 0;
     if (usd < 16) {
       addToast(`Minimum M-Pesa deposit is $16 (KES ${(16 * KES_RATE).toLocaleString()})`, "ERROR");
@@ -182,6 +189,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       return;
     }
 
+    mpesaSubmitRef.current = true;
     setPaymentLoading(true);
     addToast(`Initiating instant STK push request of $${usd} (KES ${(usd * KES_RATE).toLocaleString()})...`, "INFO");
 
@@ -224,12 +232,14 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       console.error(err);
       addToast("Network connection error initiating STK push.", "ERROR");
     } finally {
+      mpesaSubmitRef.current = false;
       setPaymentLoading(false);
     }
   };
 
   const handleStandardDeposit = (e: React.FormEvent, method: 'CRYPTO' | 'CARD' | 'WIRE') => {
     e.preventDefault();
+    if (standardDepositSubmitRef.current) return;
     if (user.accountMode === 'DEMO') {
       addToast("Deposits only function on REAL trading configurations.", "ERROR");
       return;
@@ -265,16 +275,20 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       notes = 'Blackstone Escrow Terminal';
     }
 
+    standardDepositSubmitRef.current = true;
     onModifyBalance('DEPOSIT', amt, {
       asset: assetName,
       address: notes
     });
     setTab('LEDGER');
+    setTimeout(() => {
+      standardDepositSubmitRef.current = false;
+    }, 1000);
   };
 
   const handleWithdrawalRequest = (e: React.FormEvent) => {
     e.preventDefault();
-    if (withdrawing) return;
+    if (withdrawing || withdrawSubmitRef.current) return;
     if (user.accountMode === 'DEMO') {
       addToast("Withdrawals are locked in DEMO mode.", "ERROR");
       return;
@@ -303,6 +317,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       return;
     }
 
+    withdrawSubmitRef.current = true;
     setWithdrawing(true);
 
     if (withdrawMethod === 'MPESA') {
@@ -319,9 +334,10 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
     setWithdrawAmt('30');
     
     setTimeout(() => {
+      withdrawSubmitRef.current = false;
       setWithdrawing(false);
       setTab('LEDGER');
-    }, 500);
+    }, 1000);
   };
 
   return (

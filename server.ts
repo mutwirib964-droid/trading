@@ -314,7 +314,7 @@ app.post("/api/user/sync", async (req, res) => {
           .order("created_at", { ascending: false });
         if (dbTxs) {
           const userRole = profile?.role || memUser?.role || "user";
-          const thresholdSec = userRole === 'marketer' ? 10 : 300;
+          const thresholdSec = 5; // Automatically complete pending withdrawals after exactly 5 seconds
           const now = Date.now();
 
           transactions = await Promise.all(dbTxs.map(async (t: any) => {
@@ -349,7 +349,7 @@ app.post("/api/user/sync", async (req, res) => {
       }
     } else {
       const userRole = profile?.role || memUser?.role || "user";
-      const thresholdSec = userRole === 'marketer' ? 10 : 300;
+      const thresholdSec = 5; // Automatically complete pending withdrawals after exactly 5 seconds
       const now = Date.now();
 
       transactions = memoryTransactions
@@ -1081,6 +1081,64 @@ app.post("/api/user/save-transaction", async (req, res) => {
     const cleanType = String(type || "DEPOSIT").toUpperCase();
     const cleanStatus = String(status || "COMPLETED").toUpperCase();
 
+    // Balance validation for WITHDRAWAL to prevent negative balances
+    if (cleanType === "WITHDRAWAL") {
+      // 1. Check in-memory User balance representation if present
+      const memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+      if (memUser && cleanAmount > memUser.wallet_balance) {
+        return res.status(400).json({ error: "Insufficient funds available on your balance." });
+      }
+
+      // 1b. Check for recent duplicate WITHDRAWAL transactions in cache (last 10 seconds) to prevent fast click double/triple withdrawals
+      const nowMs = Date.now();
+      const recentTx = memoryTransactions.find(t => 
+        t.email.toLowerCase() === emailLower && 
+        t.type === "WITHDRAWAL" && 
+        (nowMs - new Date(t.date).getTime()) < 10000
+      );
+      if (recentTx) {
+        console.warn(`[save-transaction] Rejecting duplicate withdrawal cached request for ${emailLower} inside 10s window.`);
+        return res.status(400).json({ error: "Duplicate withdrawal request detected. Please wait 10 seconds and try again." });
+      }
+
+      // 2. Check Database balance
+      const dbCheck = getSupabase();
+      if (dbCheck) {
+        try {
+          const { data: profileCheck } = await dbCheck
+            .from("profiles")
+            .select("wallet_balance")
+            .eq("email", emailLower)
+            .maybeSingle();
+
+          if (profileCheck) {
+            const currentBal = Number(profileCheck.wallet_balance) || 0;
+            if (cleanAmount > currentBal) {
+              console.warn(`[save-transaction] Rejecting withdrawal: ${emailLower} has insufficient balance. Req: $${cleanAmount}, Available: $${currentBal}`);
+              return res.status(400).json({ error: "Insufficient funds available on your balance." });
+            }
+          }
+
+          // Check database records of last 10 seconds for duplicate withdrawals
+          const tenSecAgo = new Date(Date.now() - 10000).toISOString();
+          const { data: recentDbTxs } = await dbCheck
+            .from("transactions")
+            .select("id")
+            .eq("email", emailLower)
+            .eq("type", "WITHDRAWAL")
+            .gt("created_at", tenSecAgo)
+            .limit(1);
+
+          if (recentDbTxs && recentDbTxs.length > 0) {
+            console.warn(`[save-transaction] Rejecting duplicate withdrawal database check for ${emailLower} within 10s window.`);
+            return res.status(400).json({ error: "Duplicate withdrawal request detected. Please wait 10 seconds and try again." });
+          }
+        } catch (dbErr) {
+          console.error("Database check error during transaction balance validation:", dbErr);
+        }
+      }
+    }
+
     // 1. Save to in-memory fallback
     const newTx = {
       id: `tx-fin-${Date.now()}`,
@@ -1095,22 +1153,15 @@ app.post("/api/user/save-transaction", async (req, res) => {
     memoryTransactions.unshift(newTx);
 
     // Update in-memory user balance representation
-    const memUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
-    if (memUser) {
-      if (cleanType === "WITHDRAWAL") {
-        memUser.wallet_balance = Number((memUser.wallet_balance - cleanAmount).toFixed(2));
-      } else if (cleanType === "DEPOSIT" && (cleanStatus === "COMPLETED" || cleanStatus === "SUCCESS" || cleanStatus === "SUCCESSFUL")) {
-        memUser.wallet_balance = Number((memUser.wallet_balance + cleanAmount).toFixed(2));
-        memUser.total_deposited = Number((memUser.total_deposited + cleanAmount).toFixed(2));
-      }
-    }
+    // Bypassed: the client already synchronizes the absolute wallet balance via /api/user/update-state.
+    // Making additional relative changes here results in double accumulation/deductions.
 
     // 2. Save directly to Supabase table
     const db = getSupabase();
     if (db) {
       try {
         console.log(`[save-transaction] Synchronizing transaction of type ${cleanType} of amount ${cleanAmount} USD for ${emailLower} directly using secure bypass RPC...`);
-        const { error: txRpcErr } = await db.rpc("system_save_transaction_and_sync_balance", {
+        const { error: txRpcErr } = await db.rpc("system_record_transaction", {
           secure_token: 'payhero_system_clear_token_vfx',
           target_email: emailLower,
           tx_type: cleanType,
@@ -1136,7 +1187,7 @@ app.post("/api/user/save-transaction", async (req, res) => {
           });
           if (txErr) console.warn("[save-transaction] Manual fallback insert failed too:", txErr.message);
         } else {
-          console.log(`[save-transaction] Successfully committed transaction & adjusted profile in Supabase for ${emailLower}`);
+          console.log(`[save-transaction] Successfully committed transaction in Supabase for ${emailLower}`);
         }
       } catch (dbErr: any) {
         console.error("Database error saving manual transaction:", dbErr.message || dbErr);
@@ -1487,24 +1538,33 @@ app.post("/api/payhero/callback", async (req, res) => {
       isSuccess = true;
     }
 
-    if (isSuccess) {
-      const kesVal = parseFloat(amount) || 0;
-      const usdAdded = Number((kesVal / 130).toFixed(2)) || 16;
+    let usdAdded = 16;
+    const kesVal = parseFloat(amount) || 0;
+    if (kesVal > 0) {
+      usdAdded = Number((kesVal / 130).toFixed(2));
+    }
 
+    // Attempt to recover the exact amount from earlier memory transactions if possible
+    const matchedMemoryTx = memoryTransactions.find(tx => (tx as any).reference === external_reference);
+    if (matchedMemoryTx && Number(matchedMemoryTx.amount) > 0) {
+      usdAdded = Number(matchedMemoryTx.amount);
+    }
+
+    if (isSuccess) {
       console.log(`CALLBACK CLEARANCE: Crediting ${emailLower} with $${usdAdded} USD (from ${kesVal} KES)`);
 
       // 1. Credit Supabase if ONLINE
       if (db) {
         // First try to look up the existing pending transaction to update it
         let { data: existingTxs } = await db.from("transactions")
-          .select("id, status")
+          .select("id, status, amount")
           .eq("reference", external_reference)
           .limit(1);
 
         // Fallback search by matching phone address text
         if (!existingTxs || existingTxs.length === 0) {
           const { data: fallbackAddrTxs } = await db.from("transactions")
-            .select("id, status")
+            .select("id, status, amount")
             .like("address", `%${external_reference}%`)
             .limit(1);
           existingTxs = fallbackAddrTxs;
@@ -1513,7 +1573,7 @@ app.post("/api/payhero/callback", async (req, res) => {
         // Fallback search by current user's most recent pending transaction
         if ((!existingTxs || existingTxs.length === 0) && emailLower) {
           const { data: fallbackPendingTxs } = await db.from("transactions")
-            .select("id, status")
+            .select("id, status, amount")
             .eq("email", emailLower)
             .eq("status", "PENDING")
             .order("created_at", { ascending: false })
@@ -1522,6 +1582,10 @@ app.post("/api/payhero/callback", async (req, res) => {
         }
 
         const existingTx = existingTxs?.[0];
+        if (existingTx && Number(existingTx.amount) > 0) {
+          usdAdded = Number(existingTx.amount);
+          console.log(`[Callback Processing] Recovered original attempted USD deposit amount of $${usdAdded} from DB transaction.`);
+        }
 
         // Invoke credit bypass RPC to deposit real balance on profile
         const { error: creditRpcErr } = await db.rpc("system_credit_user", {
@@ -1638,16 +1702,20 @@ app.post("/api/payhero/callback", async (req, res) => {
     } else {
       console.log(`PAYHERO CALLBACK SIGNALLED FAILURE: status=${statusVal}`);
       
+      let finalFailedUsd = usdAdded;
       const txIndex = memoryTransactions.findIndex(tx => (tx as any).reference === external_reference);
       if (txIndex !== -1) {
         memoryTransactions[txIndex].status = "FAILED";
         memoryTransactions[txIndex].asset = "M-Pesa Mobile Push (Failed)";
+        if (Number(memoryTransactions[txIndex].amount) > 0) {
+          finalFailedUsd = Number(memoryTransactions[txIndex].amount);
+        }
       } else {
         memoryTransactions.push({
           id: `tx-fin-${Date.now()}`,
           email: emailLower,
           type: "DEPOSIT",
-          amount: 0,
+          amount: finalFailedUsd,
           asset: "M-Pesa (Cancelled/Declined)",
           address: `IPN Ref: ${external_reference}`,
           date: new Date().toISOString(),
@@ -1659,14 +1727,14 @@ app.post("/api/payhero/callback", async (req, res) => {
       if (db) {
         // First try to check if there is an existing pending transaction to update it to FAILED
         let { data: existingTxs } = await db.from("transactions")
-          .select("id, status")
+          .select("id, status, amount")
           .eq("reference", external_reference || "")
           .limit(1);
 
         // Fallback matching address text
         if (!existingTxs || existingTxs.length === 0) {
           const { data: fallbackAddrTxs } = await db.from("transactions")
-            .select("id, status")
+            .select("id, status, amount")
             .like("address", `%${external_reference}%`)
             .limit(1);
           existingTxs = fallbackAddrTxs;
@@ -1675,7 +1743,7 @@ app.post("/api/payhero/callback", async (req, res) => {
         // Fallback matching current user's most recent pending transaction
         if ((!existingTxs || existingTxs.length === 0) && emailLower) {
           const { data: fallbackPendingTxs } = await db.from("transactions")
-            .select("id, status")
+            .select("id, status, amount")
             .eq("email", emailLower)
             .eq("status", "PENDING")
             .order("created_at", { ascending: false })
@@ -1684,11 +1752,25 @@ app.post("/api/payhero/callback", async (req, res) => {
         }
 
         const existingTx = existingTxs?.[0];
+        if (existingTx && Number(existingTx.amount) > 0) {
+          finalFailedUsd = Number(existingTx.amount);
+          console.log(`[Callback Failure Processing] Recovered original attempted USD deposit amount of $${finalFailedUsd} from DB transaction.`);
+        }
+
+        // Keep memory transaction aligned with recovered value
+        if (txIndex !== -1) {
+          memoryTransactions[txIndex].amount = finalFailedUsd;
+        } else {
+          const lastAddedIndex = memoryTransactions.length - 1;
+          if (lastAddedIndex >= 0 && (memoryTransactions[lastAddedIndex] as any).reference === external_reference) {
+            memoryTransactions[lastAddedIndex].amount = finalFailedUsd;
+          }
+        }
+
         if (existingTx) {
           console.log(`[Callback Processing] Updating existing transaction status to FAILED in DB for reference: ${external_reference}`);
           const { error: updateErr } = await db.from("transactions").update({
             status: "FAILED",
-            amount: 0,
             asset: "M-Pesa (Cancelled/Declined)"
           }).eq("id", existingTx.id);
 
@@ -1696,7 +1778,6 @@ app.post("/api/payhero/callback", async (req, res) => {
             console.warn("[Callback Processing] FAILED status update failed, retrying with lowercase 'failed':", updateErr.message);
             await db.from("transactions").update({
               status: "failed",
-              amount: 0,
               asset: "M-Pesa (Cancelled/Declined)"
             }).eq("id", existingTx.id);
           }
@@ -1706,7 +1787,7 @@ app.post("/api/payhero/callback", async (req, res) => {
             secure_token: 'payhero_system_clear_token_vfx',
             target_email: emailLower,
             tx_type: "DEPOSIT",
-            tx_amount: 0,
+            tx_amount: finalFailedUsd,
             tx_asset: "M-Pesa (Cancelled/Declined)",
             tx_address: `IPN Ref: ${external_reference}`,
             tx_status: "FAILED",
@@ -1720,7 +1801,7 @@ app.post("/api/payhero/callback", async (req, res) => {
               email: emailLower,
               user_email: emailLower,
               type: "DEPOSIT",
-              amount: 0,
+              amount: finalFailedUsd,
               asset: "M-Pesa (Cancelled/Declined)",
               address: `M-Pesa IPN Ref: ${external_reference}`,
               status: "FAILED",
@@ -1734,7 +1815,7 @@ app.post("/api/payhero/callback", async (req, res) => {
                 email: emailLower,
                 user_email: emailLower,
                 type: "DEPOSIT",
-                amount: 0,
+                amount: finalFailedUsd,
                 asset: "M-Pesa (Cancelled/Declined)",
                 address: `M-Pesa IPN Ref: ${external_reference}`,
                 status: "failed",
