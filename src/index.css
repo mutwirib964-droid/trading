@@ -3,8 +3,8 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Space Grotesk", sans-serif;
 
   --color-slate-900: var(--color-bg-main);
   --color-gray-950: var(--color-bg-main);
@@ -148,6 +148,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Connect cool Display font to headings and layout titles */
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display) !important;
+  letter-spacing: -0.02em;
+}
+
 /* Ensure ultra clear high-contrast text visibility, no faded look across any theme */
 .text-gray-400, .text-slate-400, .text-gray-500, .text-slate-500 {
   color: var(--color-text-secondary) !important;
@@ -159,6 +165,23 @@ body {
 }
 .text-gray-600, .text-slate-605 {
   color: var(--color-text-muted) !important;
+}
+
+/* Bulletproof Light Mode overrides for elements styled with gray text/details to guarantee 100% visibility */
+html[data-theme="light"] .text-gray-900,
+html[data-theme="light"] .text-slate-900,
+html[data-theme="light"] .text-gray-950,
+html[data-theme="light"] .text-slate-950 {
+  color: #0F172A !important;
+}
+
+html[data-theme="light"] .text-gray-700,
+html[data-theme="light"] .text-slate-700,
+html[data-theme="light"] .text-gray-800,
+html[data-theme="light"] .text-slate-800,
+html[data-theme="light"] .text-gray-600,
+html[data-theme="light"] .text-slate-600 {
+  color: #1E293B !important;
 }
 
 /* Theme adaptability overrides for popup modals, forms, input text and selections in light mode */

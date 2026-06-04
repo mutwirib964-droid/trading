@@ -54,6 +54,7 @@ interface BotsPanelProps {
   assets: Asset[];
   addToast: (message: string, type: 'SUCCESS' | 'ERROR' | 'INFO' | 'WARNING') => void;
   onModifyUserBalance: (margin: number, pnl: number | null, isDemo: boolean, botName: string, assetSymbol: string, updatedActiveBots?: any[]) => void;
+  theme?: 'dark' | 'light';
 }
 
 const INITIAL_BOTS: BotConfig[] = [
@@ -169,7 +170,21 @@ const INITIAL_BOTS: BotConfig[] = [
   }
 ];
 
-export default function BotsPanel({ user, assets, addToast, onModifyUserBalance }: BotsPanelProps) {
+export default function BotsPanel({ user, assets, addToast, onModifyUserBalance, theme }: BotsPanelProps) {
+  const isDark = theme !== 'light';
+
+  // Theme Design Tokens for form inputs, modals and control wrappers
+  const modalBg = isDark ? 'bg-[#0b0f19] border-gray-800' : 'bg-white border-gray-250';
+  const modalHeaderBg = isDark ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200';
+  const modalHeaderTitle = isDark ? 'text-white' : 'text-gray-900';
+  const modalLabel = isDark ? 'text-gray-400 font-bold text-[10px]' : 'text-gray-600 font-bold text-[10px]';
+  const modalInput = isDark 
+    ? 'w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500' 
+    : 'w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 focus:outline-none focus:border-emerald-650';
+  const modalDiscardBtn = isDark 
+    ? 'border-gray-800 hover:bg-gray-900 text-gray-400' 
+    : 'border-gray-300 hover:bg-gray-100 text-gray-700';
+
   const [bots, setBots] = useState<BotConfig[]>(() => {
     const saved = localStorage.getItem('vfx_custom_bots_ledger');
     if (saved) {
@@ -295,6 +310,20 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
   const hasActiveInstances = activeInstances.length > 0;
 
+  // Effect to handle finalization of completed bots outside rendering cycle
+  useEffect(() => {
+    const expiredBot = activeInstances.find(inst => inst.timeLeft <= 0);
+    if (expiredBot) {
+      const remaining = activeInstances.filter(i => i.botId !== expiredBot.botId);
+      // Remove it from current state immediately to avoid repeated runs
+      setActiveInstances(remaining);
+      localStorage.setItem('vfx_active_bots_running_state', JSON.stringify(remaining));
+      
+      // Settle the trade (updates parent-level balance and records the profit/loss)
+      handleFinalizeBotTradeRef.current(expiredBot, remaining);
+    }
+  }, [activeInstances]);
+
   // Sync active instances block on ticker
   useEffect(() => {
     if (!hasActiveInstances) return;
@@ -327,10 +356,14 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
           }
 
           if (newTimeLeft <= 0) {
-            // Settle Bot Trade!
-            const remaining = prev.filter(i => i.botId !== inst.botId);
-            handleFinalizeBotTradeRef.current(inst, remaining);
-            return null;
+            // Mark as expired to be handled safely in the external useEffect hook
+            return {
+              ...inst,
+              timeLeft: 0,
+              elapsedTime: newElapsedTime,
+              currentPnl: inst.targetPnl,
+              logs: [...newLogs, `[${new Date().toLocaleTimeString()}] [CONCLUDED] Settle payout calculations...`]
+            };
           }
 
           // Generate wavy fluctuation live PNL tracking toward targetPnl
@@ -685,15 +718,15 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
       {/* Compile Bot Popup UI Modal */}
       {isCreatorOpen && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 z-50 overflow-y-auto">
-          <div className="bg-[#0b0f19] border border-gray-800 rounded-xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl">
-            <div className="px-5 py-4 border-b border-gray-850 flex items-center justify-between bg-gray-950">
+          <div className={`${modalBg} rounded-xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-250`}>
+            <div className={`px-5 py-4 border-b flex items-center justify-between ${modalHeaderBg}`}>
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span className="text-white text-sm font-bold uppercase tracking-wider font-sans">Compiling Algorithmic Agent</span>
+                <span className={`${modalHeaderTitle} text-sm font-bold uppercase tracking-wider font-sans`}>Compiling Algorithmic Agent</span>
               </div>
               <button 
                 onClick={() => setIsCreatorOpen(false)}
-                className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className={`${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'} transition-colors cursor-pointer`}
               >
                 <Square className="w-3.5 h-3.5" />
               </button>
@@ -701,24 +734,24 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
             <form onSubmit={handleCreateBot} className="p-5 space-y-4 text-xs font-sans">
               <div className="space-y-1">
-                <label className="text-gray-400 uppercase font-bold text-[10px]">Machine Bot Designation Name</label>
+                <label className={modalLabel}>Machine Bot Designation Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Genesis Neural Grid"
                   value={newBotName}
                   onChange={(e) => setNewBotName(e.target.value)}
-                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                  className={modalInput}
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Signal Feed Indicator</label>
+                  <label className={modalLabel}>Signal Feed Indicator</label>
                   <select
                     value={newBotStrategy}
                     onChange={(e) => setNewBotStrategy(e.target.value)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    className={`${modalInput} cursor-pointer`}
                   >
                     <option value="MACD Signal Convergence">MACD Signal Convergence</option>
                     <option value="Stochastic Band Filter">Stochastic Band Filter</option>
@@ -729,11 +762,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Asset Target Instrument</label>
+                  <label className={modalLabel}>Asset Target Instrument</label>
                   <select
                     value={newBotAsset}
                     onChange={(e) => setNewBotAsset(e.target.value)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    className={`${modalInput} cursor-pointer`}
                   >
                     {assets.map(a => (
                       <option key={a.id} value={a.symbol}>{a.symbol} - {a.name}</option>
@@ -744,11 +777,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Risk Tolerance</label>
+                  <label className={modalLabel}>Risk Tolerance</label>
                   <select
                     value={newBotRisk}
                     onChange={(e) => setNewBotRisk(e.target.value as any)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                    className={`${modalInput} cursor-pointer`}
                   >
                     <option value="LOW">Low Risk</option>
                     <option value="MEDIUM">Medium Risk</option>
@@ -757,38 +790,38 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Engine Leverage (x)</label>
+                  <label className={modalLabel}>Engine Leverage (x)</label>
                   <input
                     type="number"
                     min="1"
                     max="200"
                     value={newBotLeverage}
                     onChange={(e) => setNewBotLeverage(Math.min(200, Math.max(1, parseInt(e.target.value) || 50)))}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                    className={modalInput}
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Base Real Win Rate (%)</label>
+                  <label className={modalLabel}>Base Real Win Rate (%)</label>
                   <input
                     type="number"
                     min="60"
                     max="98"
                     value={newBotWinRate}
                     onChange={(e) => setNewBotWinRate(Math.min(98, Math.max(60, parseInt(e.target.value) || 90)))}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                    className={modalInput}
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-gray-400 uppercase font-bold text-[10px]">Strategy Summary & Brief</label>
+                <label className={modalLabel}>Strategy Summary & Brief</label>
                 <textarea
                   rows={2}
                   placeholder="Describe your logical mathematical strategy pipeline..."
                   value={newBotDesc}
                   onChange={(e) => setNewBotDesc(e.target.value)}
-                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none text-[11px]"
+                  className={`${modalInput} text-[11px]`}
                 />
               </div>
 
@@ -796,13 +829,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 <button
                   type="button"
                   onClick={() => setIsCreatorOpen(false)}
-                  className="px-4 py-2 border border-gray-800 hover:bg-gray-900 rounded-lg font-bold text-gray-400 cursor-pointer"
+                  className={`px-4 py-2 border rounded-lg font-bold cursor-pointer transition-colors ${modalDiscardBtn}`}
                 >
                   Discard
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold cursor-pointer uppercase"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold cursor-pointer uppercase transition-all"
                 >
                   Compile and Load
                 </button>
@@ -815,56 +848,60 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
       {/* Upload Bot Specifications Setup Dialog Modal */}
       {isUploadSettingsOpen && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 z-50 overflow-y-auto">
-          <div className="bg-[#0b0f19] border border-gray-800 rounded-xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-250">
-            <div className="px-5 py-4 border-b border-gray-850 flex items-center justify-between bg-gray-950">
+          <div className={`${modalBg} rounded-xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-250`}>
+            <div className={`px-5 py-4 border-b flex items-center justify-between ${modalHeaderBg}`}>
               <div className="flex items-center gap-2">
                 <UploadCloud className="w-4 h-4 text-emerald-400" />
-                <span className="text-white text-sm font-bold uppercase tracking-wider font-sans">Configure Uploaded Bot Specs</span>
+                <span className={`${modalHeaderTitle} text-sm font-bold uppercase tracking-wider font-sans`}>Configure Uploaded Bot Specs</span>
               </div>
               <button 
                 onClick={() => setIsUploadSettingsOpen(false)}
-                className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className={`${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'} transition-colors cursor-pointer`}
               >
                 <Square className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <form onSubmit={handleInstallUploadedBot} className="p-5 space-y-4 text-xs font-sans">
-              <div className="bg-emerald-950/20 border border-emerald-900/40 p-3 rounded-lg text-emerald-400 leading-relaxed font-medium">
+              <div className={`p-3 rounded-lg leading-relaxed font-medium border ${
+                isDark 
+                  ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400' 
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-850'
+              }`}>
                 Blueprint recognized! Set your configuration preferences. These parameters define how the bot manages capital allocations and executes quantum triggers.
               </div>
 
               <div className="space-y-1">
-                <label className="text-gray-400 uppercase font-bold text-[10px]">Machine Bot Designation Name</label>
+                <label className={modalLabel}>Machine Bot Designation Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Astra Alpha Core"
                   value={uploadBotName}
                   onChange={(e) => setUploadBotName(e.target.value)}
-                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                  className={modalInput}
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Trading Strategy System</label>
+                  <label className={modalLabel}>Trading Strategy System</label>
                   <input
                     type="text"
                     placeholder="e.g. Dynamic EMA Convergence"
                     value={uploadBotStrategy}
                     onChange={(e) => setUploadBotStrategy(e.target.value)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                    className={modalInput}
                     required
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Trading Instrument / Currency</label>
+                  <label className={modalLabel}>Trading Instrument / Currency</label>
                   <select
                     value={uploadBotAsset}
                     onChange={(e) => setUploadBotAsset(e.target.value)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 cursor-pointer text-xs"
+                    className={`${modalInput} cursor-pointer text-xs`}
                   >
                     {assets.map(a => (
                       <option key={a.id} value={a.symbol}>{a.symbol} - {a.name}</option>
@@ -875,11 +912,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Risk Level</label>
+                  <label className={modalLabel}>Risk Level</label>
                   <select
                     value={uploadBotRisk}
                     onChange={(e) => setUploadBotRisk(e.target.value as any)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none cursor-pointer"
+                    className={`${modalInput} cursor-pointer`}
                   >
                     <option value="LOW">Low Risk</option>
                     <option value="MEDIUM">Medium Risk</option>
@@ -888,38 +925,38 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Leverage Limit (x)</label>
+                  <label className={modalLabel}>Leverage Limit (x)</label>
                   <input
                     type="number"
                     min="1"
                     max="200"
                     value={uploadBotLeverage}
                     onChange={(e) => setUploadBotLeverage(Math.min(200, Math.max(1, parseInt(e.target.value) || 50)))}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                    className={modalInput}
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Design Win Rate (%)</label>
+                  <label className={modalLabel}>Design Win Rate (%)</label>
                   <input
                     type="number"
                     min="60"
                     max="98"
                     value={uploadBotWinRate}
                     onChange={(e) => setUploadBotWinRate(Math.min(98, Math.max(60, parseInt(e.target.value) || 92)))}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none"
+                    className={modalInput}
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-gray-400 uppercase font-bold text-[10px]">Algorithm Description & Objective</label>
+                <label className={modalLabel}>Algorithm Description & Objective</label>
                 <textarea
                   rows={2}
                   placeholder="Summarize the behavior parameters of this algorithm..."
                   value={uploadBotDesc}
                   onChange={(e) => setUploadBotDesc(e.target.value)}
-                  className="w-full bg-[#05070a] border border-gray-800 rounded-lg p-2.5 text-white focus:outline-none text-[11px]"
+                  className={`${modalInput} text-[11px]`}
                 />
               </div>
 
@@ -927,13 +964,13 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                 <button
                   type="button"
                   onClick={() => setIsUploadSettingsOpen(false)}
-                  className="px-4 py-2 border border-gray-800 hover:bg-gray-900 rounded-lg font-bold text-gray-400 cursor-pointer"
+                  className={`px-4 py-2 border rounded-lg font-bold cursor-pointer transition-colors ${modalDiscardBtn}`}
                 >
                   Discard
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-650 hover:bg-emerald-600 text-white rounded-lg font-bold cursor-pointer uppercase tracking-wider"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold cursor-pointer uppercase tracking-wider transition-all"
                 >
                   Compile and Install Bot
                 </button>
@@ -946,36 +983,36 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
       {/* Start Bot Modal */}
       {selectedBotToRun && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 z-50">
-          <div className="bg-[#0b0f19] border border-gray-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="px-5 py-3.5 border-b border-gray-850 bg-gray-950 flex justify-between items-center">
-              <span className="text-white font-bold flex items-center gap-1 text-xs uppercase tracking-wider">
+          <div className={`${modalBg} rounded-xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-250`}>
+            <div className={`px-5 py-3.5 border-b flex justify-between items-center ${modalHeaderBg}`}>
+              <span className={`${modalHeaderTitle} font-bold flex items-center gap-1 text-xs uppercase tracking-wider`}>
                 <Play className="w-4 h-4 text-emerald-400" /> Deploy: {selectedBotToRun.name}
               </span>
               <button 
                 onClick={() => setSelectedBotToRun(null)}
-                className="text-gray-450 hover:text-white cursor-pointer"
+                className={`${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'} cursor-pointer`}
               >
                 <Square className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <div className="p-5 space-y-4 text-xs font-sans">
-              <div className="bg-gray-950 p-3 rounded-lg border border-gray-850 space-y-1">
+              <div className={`p-3 rounded-lg border space-y-1 ${isDark ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'}`}>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Target Asset Symbol:</span>
-                  <span className="text-white font-mono font-bold">{selectedBotToRun.targetAsset}</span>
+                  <span className={`${isDark ? 'text-gray-500' : 'text-gray-600'} font-medium`}>Target Asset Symbol:</span>
+                  <span className={`${isDark ? 'text-white' : 'text-gray-900'} font-mono font-bold`}>{selectedBotToRun.targetAsset}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Execution Signal:</span>
-                  <span className="text-gray-300 font-semibold">{selectedBotToRun.strategy}</span>
+                  <span className={`${isDark ? 'text-gray-500' : 'text-gray-600'} font-medium`}>Execution Signal:</span>
+                  <span className={`${isDark ? 'text-gray-300' : 'text-gray-800'} font-semibold`}>{selectedBotToRun.strategy}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Multiplier Leverage:</span>
-                  <span className="text-emerald-450 font-bold">{selectedBotToRun.defaultLeverage}x</span>
+                  <span className={`${isDark ? 'text-gray-500' : 'text-gray-600'} font-medium`}>Multiplier Leverage:</span>
+                  <span className="text-emerald-500 font-bold">{selectedBotToRun.defaultLeverage}x</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Account Mode:</span>
-                  <span className={`font-bold ${user.accountMode === 'DEMO' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  <span className={`${isDark ? 'text-gray-500' : 'text-gray-600'} font-medium`}>Account Mode:</span>
+                  <span className={`font-bold ${user.accountMode === 'DEMO' ? 'text-amber-500' : 'text-emerald-500'}`}>
                     {user.accountMode === 'DEMO' ? 'SECURED SANDBOX' : 'LIVE / LIQUIDITY'}
                   </span>
                 </div>
@@ -984,8 +1021,8 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
               {/* Trade Capital margin input */}
               <div className="space-y-1">
                 <div className="flex justify-between items-center">
-                  <label className="text-gray-400 uppercase font-bold text-[10px]">Position Collateral (Margin)</label>
-                  <span className="text-[10px] text-gray-500 font-mono">
+                  <label className={modalLabel}>Position Collateral (Margin)</label>
+                  <span className="text-[10px] text-gray-500 font-mono font-medium">
                     Avail: ${(user.accountMode === 'DEMO' ? (user.demoBalance ?? 10000) : user.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
@@ -997,7 +1034,9 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                     placeholder="100"
                     value={runMargin}
                     onChange={(e) => setRunMargin(e.target.value)}
-                    className="w-full bg-[#05070a] border border-gray-800 rounded-lg pl-6 pr-3 py-2 text-white font-bold text-sm focus:outline-none focus:border-emerald-500"
+                    className={`w-full rounded-lg pl-6 pr-3 py-2 font-bold text-sm focus:outline-none focus:border-emerald-500 ${
+                      isDark ? 'bg-[#05070a] border border-gray-800 text-white' : 'bg-white border border-gray-300 text-gray-950'
+                    }`}
                   />
                 </div>
                 <div className="flex gap-2.5 pt-1">
@@ -1006,7 +1045,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                       key={val}
                       type="button"
                       onClick={() => setRunMargin(val)}
-                      className="px-2 py-1 bg-gray-950 border border-gray-850 hover:border-gray-750 text-gray-400 rounded hover:text-white transition-all text-[10px] font-mono cursor-pointer"
+                      className={`px-2 py-1 border rounded transition-all text-[10px] font-mono cursor-pointer ${
+                        isDark 
+                          ? 'bg-gray-950 border-gray-800 hover:border-gray-700 text-gray-400 hover:text-white' 
+                          : 'bg-gray-100 border-gray-200 hover:border-gray-350 text-gray-600 hover:text-gray-900'
+                      }`}
                     >
                       +${val}
                     </button>
@@ -1016,9 +1059,9 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
 
               {/* Delay Slider: Minimum 10 seconds, maximum 3 minutes (180 seconds) */}
               <div className="space-y-1.5">
-                <div className="flex justify-between text-[10px] font-bold uppercase text-gray-400">
+                <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
                   <span>Selected Auto-Exit Delay</span>
-                  <span className="text-emerald-450 font-mono text-xs">{runDuration} seconds</span>
+                  <span className="text-emerald-500 font-mono text-xs">{runDuration} seconds</span>
                 </div>
                 <input
                   type="range"
@@ -1026,7 +1069,9 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                   max="180"
                   value={runDuration}
                   onChange={(e) => setRunDuration(Number(e.target.value))}
-                  className="w-full h-1 bg-gray-900 border border-gray-800 rounded-lg appearance-none cursor-pointer accent-emerald-500 focus:outline-none"
+                  className={`w-full h-1 rounded-lg appearance-none cursor-pointer accent-emerald-500 focus:outline-none ${
+                    isDark ? 'bg-gray-900 border border-gray-800' : 'bg-gray-200 border border-gray-300'
+                  }`}
                 />
                 <div className="flex justify-between items-center gap-1.5 pt-1">
                   {[
@@ -1042,8 +1087,10 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                       onClick={() => setRunDuration(preset.time)}
                       className={`px-2 py-1 border rounded transition-all text-[10px] font-semibold cursor-pointer ${
                         runDuration === preset.time 
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
-                          : 'bg-gray-950 text-gray-400 border-gray-850 hover:text-white'
+                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
+                          : isDark 
+                            ? 'bg-gray-950 text-gray-400 border-gray-850 hover:text-white' 
+                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:text-gray-900'
                       }`}
                     >
                       {preset.label}
@@ -1072,22 +1119,22 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Terminal className="text-emerald-400 w-4 h-4" />
-            <h2 className="text-white text-xs font-bold uppercase tracking-wider font-sans">Active Live Bot Engines Runs ({activeInstances.length})</h2>
+            <h2 className={`${isDark ? 'text-white' : 'text-gray-900'} text-xs font-bold uppercase tracking-wider font-sans`}>Active Live Bot Engines Runs ({activeInstances.length})</h2>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {activeInstances.map((inst) => {
               const secondsPercent = (inst.timeLeft / inst.duration) * 100;
               return (
-                <div key={inst.botId} className="bg-gray-950 border border-gray-850 rounded-xl overflow-hidden flex flex-col font-mono text-[11px] shadow-lg">
+                <div key={inst.botId} className={`border rounded-xl overflow-hidden flex flex-col font-mono text-[11px] shadow-lg ${isDark ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-200'}`}>
                   {/* Title Bar layout */}
-                  <div className="bg-[#0c1220] border-b border-gray-850 px-4 py-3 flex items-center justify-between">
+                  <div className={`border-b px-4 py-3 flex items-center justify-between ${isDark ? 'bg-[#0c1220] border-gray-850' : 'bg-gray-50 border-gray-200'}`}>
                     <div className="flex items-center gap-1.5">
                       <span className="flex h-1.5 w-1.5 relative">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                       </span>
-                      <span className="text-white font-bold">{inst.botName}</span>
+                      <span className={`${isDark ? 'text-white' : 'text-gray-900'} font-bold`}>{inst.botName}</span>
                       <span className="text-gray-500">|</span>
                       <span className="text-emerald-450 font-bold">{inst.assetSymbol}</span>
                     </div>
@@ -1108,12 +1155,12 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                   </div>
 
                   {/* Visual Status Grid */}
-                  <div className="p-3 bg-gray-950 border-b border-gray-900 flex justify-between gap-4 font-sans uppercase text-[9px] font-bold tracking-wide text-gray-500">
+                  <div className={`p-3 border-b flex justify-between gap-4 font-sans uppercase text-[9px] font-bold tracking-wide text-gray-500 ${isDark ? 'bg-gray-950 border-gray-900' : 'bg-white border-gray-200'}`}>
                     <div>
-                      MARGIN COLLATERAL: <span className="text-white font-mono text-[10px] pl-1">${inst.margin.toFixed(2)}</span>
+                      MARGIN COLLATERAL: <span className={`${isDark ? 'text-white' : 'text-gray-900'} font-mono text-[10px] pl-1`}>${inst.margin.toFixed(2)}</span>
                     </div>
                     <div>
-                      TIME WINDOW: <span className="text-gray-300 font-mono text-[10px] pl-1">{inst.duration}s</span>
+                      TIME WINDOW: <span className={`${isDark ? 'text-gray-300' : 'text-gray-700'} font-mono text-[10px] pl-1`}>{inst.duration}s</span>
                     </div>
                     <div>
                       SYSTEM ENTRANCE: <span className="text-emerald-450 font-mono text-[10px] pl-1">COMPLETED</span>
@@ -1121,10 +1168,10 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                   </div>
 
                   {/* Detailed Performance, elapsed time, remaining seconds, and live P&L */}
-                  <div className="px-4 py-3 bg-[#0a101d] border-b border-gray-900 grid grid-cols-3 gap-2 font-sans">
+                  <div className={`px-4 py-3 border-b grid grid-cols-3 gap-2 font-sans ${isDark ? 'bg-[#0a101d] border-gray-900' : 'bg-gray-50 border-gray-200'}`}>
                     <div className="space-y-0.5">
                       <span className="text-[9px] text-gray-550 uppercase font-extrabold tracking-wider block">Time Running</span>
-                      <span className="text-white text-xs font-mono font-bold">
+                      <span className={`${isDark ? 'text-white' : 'text-gray-900'} text-xs font-mono font-bold`}>
                         {inst.elapsedTime}s elapsed
                       </span>
                     </div>
@@ -1156,14 +1203,14 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                   </div>
 
                   {/* Interactive Terminal log reader */}
-                  <div className="p-3 bg-[#03060a] min-h-[105px] max-h-[145px] overflow-y-auto space-y-1 custom-scrollbar text-emerald-500/80 font-mono text-[10px] leading-relaxed">
+                  <div className={`p-3 min-h-[105px] max-h-[145px] overflow-y-auto space-y-1 custom-scrollbar font-mono text-[10px] leading-relaxed ${isDark ? 'bg-[#03060a] text-emerald-500/80' : 'bg-gray-100 text-emerald-800'}`}>
                     {inst.logs.map((log, index) => (
                       <div key={index} className="flex gap-1">
-                        <ChevronRight className="w-3 h-3 text-emerald-600 shrink-0 mt-0.5" />
+                        <ChevronRight className={`w-3 h-3 shrink-0 mt-0.5 ${isDark ? 'text-emerald-600' : 'text-emerald-750'}`} />
                         <span>{log}</span>
                       </div>
                     ))}
-                    <div className="animate-pulse text-emerald-400 font-bold flex gap-1 items-center bg-emerald-950/20 px-1 py-0.5 rounded w-fit">
+                    <div className={`animate-pulse font-bold flex gap-1 items-center px-1 py-0.5 rounded w-fit ${isDark ? 'text-emerald-400 bg-emerald-950/20' : 'text-emerald-700 bg-emerald-200/30'}`}>
                       <span>⚡ SYS LOG TILE INJECTED : LIVE PIPELINE IN PROGRESS...</span>
                     </div>
                   </div>
@@ -1177,11 +1224,11 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
       {/* Grid of the 10 available compiled Bots */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-white text-xs font-bold uppercase tracking-wider font-sans flex items-center gap-1.5">
+          <h2 className={`${isDark ? 'text-white' : 'text-gray-900'} text-xs font-bold uppercase tracking-wider font-sans flex items-center gap-1.5`}>
             <Cpu className="w-4 h-4 text-emerald-400" />
             Available Algorithmic Bots ({bots.length})
           </h2>
-          <span className="text-gray-500 text-[10px] font-sans font-semibold">Select an agent client, allocate balance & run</span>
+          <span className={`${isDark ? 'text-gray-500' : 'text-gray-600'} text-[10px] font-sans font-semibold`}>Select an agent client, allocate balance & run</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1190,28 +1237,34 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
             return (
               <div 
                 key={bot.id} 
-                className={`bg-[#070b13] border rounded-xl overflow-hidden shadow-lg flex flex-col justify-between transition-all ${
+                className={`border rounded-xl overflow-hidden shadow-lg flex flex-col justify-between transition-all ${
+                  isDark 
+                    ? 'bg-[#070b13] border-gray-850 hover:border-gray-750 text-white' 
+                    : 'bg-white border-gray-200 hover:border-gray-300 text-gray-900'
+                } ${
                   isBotRunning 
                     ? 'border-emerald-500/40 ring-1 ring-emerald-500/10' 
-                    : 'border-gray-850 hover:border-gray-750'
+                    : ''
                 }`}
               >
                 <div className="p-4 space-y-3">
                   <div className="flex justify-between items-start gap-2">
                     <div className="space-y-0.5 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <h3 className="text-white text-sm font-bold truncate tracking-tight">{bot.name}</h3>
+                        <h3 className={`${isDark ? 'text-white' : 'text-gray-900'} text-sm font-bold truncate tracking-tight`}>{bot.name}</h3>
                         <span className={`text-[8px] px-1 py-0.5 rounded font-mono font-bold uppercase ${
                           bot.creator === 'System' 
-                            ? 'bg-gray-900 border border-gray-800 text-gray-500' 
+                            ? isDark ? 'bg-gray-900 border border-gray-800 text-gray-400' : 'bg-gray-100 border border-gray-200 text-gray-600'
                             : bot.creator === 'Uploaded'
-                            ? 'bg-purple-950 border border-purple-900 text-purple-400'
-                            : 'bg-emerald-950 border border-emerald-900 text-emerald-400'
+                            ? isDark ? 'bg-purple-950/40 border border-purple-900/50 text-purple-400' : 'bg-purple-50 border border-purple-250 text-purple-750'
+                            : isDark ? 'bg-emerald-950/40 border border-emerald-900/50 text-emerald-400' : 'bg-emerald-50 border border-emerald-250 text-emerald-750'
                         }`}>
                           {bot.creator}
                         </span>
                       </div>
-                      <span className="text-[10px] text-gray-500 font-mono uppercase bg-gray-950 px-1.5 py-0.5 rounded border border-gray-900 inline-block">
+                      <span className={`text-[10px] ${
+                        isDark ? 'text-gray-400 bg-gray-950 border-gray-900' : 'text-gray-600 bg-gray-100 border-gray-200'
+                      } font-mono uppercase px-1.5 py-0.5 rounded border inline-block`}>
                         {bot.targetAsset}
                       </span>
                     </div>
@@ -1222,52 +1275,56 @@ export default function BotsPanel({ user, assets, addToast, onModifyUserBalance 
                         Active
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded bg-gray-950 text-gray-550 text-[9px] uppercase font-bold border border-gray-900">
+                      <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${
+                        isDark ? 'bg-gray-950 text-gray-400 border-gray-900' : 'bg-gray-100 text-gray-600 border-gray-200'
+                      }`}>
                         Ready
                       </span>
                     )}
                   </div>
 
-                  <p className="text-[11px] text-gray-450 leading-relaxed font-sans line-clamp-2 min-h-[32px]">
+                  <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-gray-650'} leading-relaxed font-sans line-clamp-2 min-h-[32px]`}>
                     {bot.description}
                   </p>
 
-                  <div className="bg-gray-950 p-3 rounded-lg border border-gray-900 text-[10px] font-sans font-medium space-y-1 text-gray-500">
+                  <div className={`p-3 rounded-lg border text-[10px] font-sans font-medium space-y-1 ${
+                    isDark ? 'bg-[#04070c] border-gray-900 text-gray-500' : 'bg-gray-50 border-gray-200 text-gray-600'
+                  }`}>
                     <div className="flex justify-between">
                       <span>Strategy System:</span>
-                      <span className="text-gray-300 font-semibold">{bot.strategy}</span>
+                      <span className={`${isDark ? 'text-gray-300' : 'text-gray-800'} font-semibold`}>{bot.strategy}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Leverage Limit:</span>
-                      <span className="text-gray-300 font-mono">{bot.defaultLeverage}x</span>
+                      <span className={`${isDark ? 'text-gray-300' : 'text-gray-850'} font-mono`}>{bot.defaultLeverage}x</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Risk Level:</span>
                       <span className={`font-bold font-mono ${
-                        bot.riskTolerance === 'LOW' ? 'text-blue-400' : bot.riskTolerance === 'MEDIUM' ? 'text-amber-400' : 'text-rose-400'
+                        bot.riskTolerance === 'LOW' ? 'text-blue-500' : bot.riskTolerance === 'MEDIUM' ? 'text-amber-500' : 'text-rose-500'
                       }`}>{bot.riskTolerance}</span>
                     </div>
-                    <div className="flex justify-between pt-1 border-t border-gray-900">
+                    <div className={`flex justify-between pt-1 border-t ${isDark ? 'border-gray-900' : 'border-gray-200'}`}>
                       <span>Base Design Win Rate:</span>
-                      <span className="text-white font-mono font-bold">
+                      <span className={`${isDark ? 'text-white' : 'text-gray-900'} font-mono font-bold`}>
                         {`${bot.winRate}%`}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-t border-gray-850 px-4 py-3 bg-gray-950 flex shadow-inner">
+                <div className={`border-t px-4 py-3 flex shadow-inner ${isDark ? 'border-gray-850 bg-gray-950' : 'border-gray-200 bg-gray-50'}`}>
                   {isBotRunning ? (
                     <button
                       onClick={() => handleKillBot(bot.id)}
-                      className="w-full py-1.5 border border-red-900 border-dashed text-red-400 hover:bg-red-950/20 rounded-lg text-[10px] font-bold uppercase transition-all tracking-wide cursor-pointer text-center"
+                      className="w-full py-1.5 border border-red-900 border-dashed text-red-500 hover:bg-red-950/20 rounded-lg text-[10px] font-bold uppercase transition-all tracking-wide cursor-pointer text-center"
                     >
                       Emergency Exit Routine
                     </button>
                   ) : (
                     <button
                       onClick={() => handleInitStartBot(bot)}
-                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white hover:text-white rounded-lg text-[10px] font-bold uppercase transition-all tracking-wider flex items-center justify-center gap-1.5 cursor-pointer text-center border border-transparent shadow shadow-emerald-950"
+                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold uppercase transition-all tracking-wider flex items-center justify-center gap-1.5 cursor-pointer text-center border border-transparent shadow shadow-emerald-950"
                     >
                       <Play className="w-3.5 h-3.5" />
                       Run Client Instance

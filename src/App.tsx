@@ -2134,6 +2134,7 @@ export default function App() {
                 assets={assets}
                 addToast={(msg, type) => addToast(msg, type === 'WARNING' ? 'INFO' : type)}
                 onModifyUserBalance={handleModifyUserBalance}
+                theme={theme}
               />
             )}
 
