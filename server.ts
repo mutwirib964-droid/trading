@@ -1065,7 +1065,7 @@ app.post("/api/payhero/stkpush", async (req, res) => {
 
   } catch (error: any) {
     console.error("Payhero STK Error:", error);
-    res.status(500).json({ error: "Exception triggering STK push payment: " + error.message });
+    res.status(500).json({ error: "Exception establishing mobile money gateway route: " + error.message });
   }
 });
 

@@ -131,7 +131,7 @@ Recommended Strategy for **${activeAsset.symbol}** (Simulated fallback):
               ELITE AI STRATEGIST
               <Sparkles className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
             </h3>
-            <p className="text-[7.5px] text-gray-500 font-mono">POWERED BY GEMINI PRO</p>
+            <p className="text-[7.5px] text-gray-500 font-mono">PROPRIETARY QUANT ENGINE</p>
           </div>
         </div>
 

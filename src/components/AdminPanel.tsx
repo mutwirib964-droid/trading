@@ -250,7 +250,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
     if (!simUserEmail) return;
 
     setSimLoading(true);
-    addToast("Executing Safaricom M-Pesa sandbox transaction...", "INFO");
+    addToast("Executing mobile money gateway sandbox transaction...", "INFO");
 
     try {
       const resp = await fetch(getApiUrl("/api/payhero/sandbox-trigger"), {
@@ -791,7 +791,7 @@ export default function AdminPanel({ currentUser, addToast, onRefreshUserSession
 
             <div className="my-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3.5 text-[10.5px] text-emerald-400 leading-normal">
               <span className="font-bold block mb-0.5 uppercase tracking-wide">M-PESA INSTANT GATEWAY API EMULATOR</span>
-              Dispatches a simulated Safaricom Instant Webhook reference notification. This will verify real-time deposit ledger loops seamlessly and allocate real credit!
+              Dispatches a simulated mobile money instant transaction webhook. This will verify real-time deposit ledger loops seamlessly and allocate real credit!
             </div>
 
             <form onSubmit={handleDispatchSandboxCallback} className="space-y-4 text-xs mt-2">

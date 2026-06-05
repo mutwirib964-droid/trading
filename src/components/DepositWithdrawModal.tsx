@@ -85,7 +85,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         setStkStatus('COMPLETED');
         onModifyBalance('DEPOSIT', stkUsdValue, {
           asset: `M-Pesa (Code: Sim-Cleared)`,
-          address: `STK Ref: ${stkReference.slice(-10)}`,
+          address: `Ref: ${stkReference.slice(-10)}`,
           phone: stkPhoneValue
         });
       } else {
@@ -116,7 +116,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
             // Credit real balance and log transaction on client immediately
             onModifyBalance('DEPOSIT', stkUsdValue, {
               asset: `M-Pesa (Code: Cleared)`,
-              address: `STK Ref: ${stkReference.slice(-10)}`,
+              address: `Ref: ${stkReference.slice(-10)}`,
               phone: stkPhoneValue
             });
           } else if (
@@ -191,7 +191,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
 
     mpesaSubmitRef.current = true;
     setPaymentLoading(true);
-    addToast(`Initiating instant STK push request of $${usd} (KES ${(usd * KES_RATE).toLocaleString()})...`, "INFO");
+    addToast(`Initiating automated payment channel of $${usd} (KES ${(usd * KES_RATE).toLocaleString()})...`, "INFO");
 
     try {
       const resp = await fetch(getApiUrl("/api/payhero/stkpush"), {
@@ -215,7 +215,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
         setStkStatus('PENDING');
         setPollSecondsLeft(180);
         
-        addToast("STK push sent! Please unlock your phone and enter your M-Pesa PIN.", "SUCCESS");
+        addToast("Mobile money prompt sent! Please enter your M-Pesa PIN on your phone to approve.", "SUCCESS");
       } else {
         let errorMsg = data.error || "Too many unsuccessful requests are being sent to this user.";
         if (typeof errorMsg === 'string' && (
@@ -230,7 +230,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
       }
     } catch (err) {
       console.error(err);
-      addToast("Network connection error initiating STK push.", "ERROR");
+      addToast("Network connection error initiating standard payment.", "ERROR");
     } finally {
       mpesaSubmitRef.current = false;
       setPaymentLoading(false);
@@ -379,7 +379,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
             <div className="flex-1 flex flex-col justify-center items-center text-center p-4 space-y-5 font-mono">
               <div className="bg-emerald-950/25 border border-emerald-500/25 p-4 rounded-xl w-full text-left space-y-2.5">
                 <span className="text-emerald-400 text-xxs block font-bold tracking-widest uppercase">
-                  ● Safe Channel STK Connection Active
+                  ● Secure Payment Channel Route Active
                 </span>
                 <div className="text-[10px] text-gray-400 space-y-1">
                   <div className="flex justify-between">
@@ -411,7 +411,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-white text-xs font-bold uppercase tracking-wider">Awaiting Wallet PIN Authorization</h3>
                     <p className="text-gray-400 text-[10px] leading-relaxed max-w-xs">
-                      Safaricom network STK push dispatched! Enter your 4-digit M-Pesa PIN on your phone handset to clear the payment transaction.
+                      Mobile gateway payment dispatched! Please enter your M-Pesa PIN on your phone screen to complete the transaction safely.
                     </p>
                     {/* No visual countdown badge is printed to keep the interface clean and professional */}
                   </div>
@@ -482,7 +482,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-rose-400 text-xs font-bold uppercase tracking-widest">TRANSACTION FAILED</h3>
                     <p className="text-gray-400 text-xxs leading-relaxed max-w-sm">
-                      The M-Pesa STK push transaction was cancelled, expired, or rejected. Please verify your line balance and retry.
+                      The M-Pesa automated transaction was cancelled, expired, or rejected. Please verify your phone has a valid connection and try again.
                     </p>
                   </div>
 
@@ -517,7 +517,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   <div className="space-y-1">
                     <h3 className="text-amber-500 text-xs font-bold uppercase tracking-widest">TRANSACTION TIMED OUT</h3>
                     <p className="text-gray-400 text-xxs leading-relaxed max-w-sm font-semibold">
-                      We did not receive any callback response from Safaricom carrier within 10 seconds.
+                      We did not receive any gateway response from the payment network within the active connection window.
                     </p>
                   </div>
 
@@ -526,7 +526,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                     onClick={() => setStkReference(null)}
                     className="w-full max-w-xs py-2 bg-emerald-500 hover:bg-emerald-400 text-black border-none font-bold text-[10px] tracking-widest uppercase rounded cursor-pointer transition-all"
                   >
-                    Initiate New STK Request
+                    Initiate New Payment Request
                   </button>
                 </div>
               )}
@@ -566,12 +566,12 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   {depositMethod === 'MPESA' && (
                     <form onSubmit={handleMpesaDeposit} className="space-y-4 text-left font-mono text-xs">
                        <div className="bg-emerald-950/20 border border-emerald-500/10 p-3 rounded-lg text-xxs text-emerald-400 leading-normal">
-                        <span className="font-bold block mb-1">M-PESA INSTANT PORTAL</span>
-                        Initiate an instant STK push to your Safaricom mobile phone. Minimum deposit limit is <b className="text-white">KES 2,080 ($16)</b>.
+                        <span className="font-bold block mb-1">M-PESA DEPOSIT GATEWAY</span>
+                        Initiate a direct mobile money transaction to fund your wallet. Minimum deposit limit is <b className="text-white">KES 2,080 ($16)</b>.
                       </div>
 
                       <div className="space-y-1.5">
-                        <span className="text-gray-500 text-[9px] uppercase font-bold">SAFARICOM M-PESA PHONE NUMBER</span>
+                        <span className="text-gray-500 text-[9px] uppercase font-bold">M-PESA PHONE NUMBER</span>
                         <input
                           type="text"
                           value={mpesaPhone}
@@ -612,10 +612,10 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                       >
                         {paymentLoading ? (
                           <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> DISPATCHING STK PUSH SEND...
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> ESTABLISHING SECURE GATEWAY ROUTE...
                           </>
                         ) : (
-                          "INITIATE Safaricom M-Pesa push"
+                          "CONFIRM & DEPOSIT VIA M-PESA"
                         )}
                       </button>
                     </form>
@@ -828,7 +828,7 @@ export default function DepositWithdrawModal({ user, onClose, onModifyBalance, t
                   {withdrawMethod === 'MPESA' ? (
                     <>
                       <div className="space-y-1.5">
-                        <span className="text-gray-500 text-[9px] uppercase font-bold">SAFARICOM REGISTERED M-PESA PHONE</span>
+                        <span className="text-gray-500 text-[9px] uppercase font-bold">REGISTERED M-PESA PHONE NUMBER</span>
                         <input
                           type="text"
                           className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-emerald-500"
