@@ -264,6 +264,9 @@ app.post("/api/user/sync", async (req, res) => {
         }
 
         if (!profile && !fallbackToMemory) {
+          if (req.body.mode === "LOGIN") {
+            return res.status(401).json({ error: "Invalid credentials: The account has not been created under this email. Please register first." });
+          }
           const initialRole = isAdmin ? "admin" : "user";
           const initialBalance = isAdmin ? 1000 : 0;
           const defaultName = name || emailLower.split('@')[0].toUpperCase();
@@ -465,6 +468,9 @@ app.post("/api/user/sync", async (req, res) => {
     // MEMORY STORE FALLBACK (Super robust)
     memUser = memUser || memoryUsers.find(u => u.email.toLowerCase() === emailLower);
     if (!memUser) {
+      if (req.body.mode === "LOGIN") {
+        return res.status(401).json({ error: "Invalid credentials: The account has not been created under this email. Please register first." });
+      }
       const initialRole = isAdmin ? "admin" : "user";
       const initialBalance = isAdmin ? 1000 : 0;
       memUser = {
@@ -504,7 +510,14 @@ app.post("/api/user/sync", async (req, res) => {
       isKycVerified: memUser.is_kyc_verified || "unverified"
     });
   } catch (err: any) {
-    console.error("[Fatal /api/user/sync Exception] Falling back anyway to robust default login:", err);
+    console.error("[Fatal /api/user/sync Exception] sync error:", err);
+    if (req.body?.mode === "LOGIN") {
+      const emailLower = (req.body?.email || "").toLowerCase();
+      const existingMemUser = memoryUsers.find(u => u.email.toLowerCase() === emailLower);
+      if (!existingMemUser) {
+        return res.status(401).json({ error: "Invalid credentials: The account has not been created under this email. Please register first." });
+      }
+    }
     // Even if a fatal javascript error happened, do NOT fail the response. Give them a valid login payload!
     const emailLower = (req.body?.email || "trader").toLowerCase();
     const userUid = req.body?.uid || "";

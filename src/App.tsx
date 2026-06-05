@@ -922,8 +922,9 @@ export default function App() {
           });
           
           if (signUpError) {
-            console.warn("Supabase signup skipped/failed, bypassing via sandbox fallback:", signUpError.message);
-            addToast(`Authentication Bypass: ${signUpError.message}. Logging in via Sandbox Mode.`, "INFO");
+            console.error("Supabase signup failed:", signUpError.message);
+            addToast(`Registration Failed: ${signUpError.message}`, "ERROR");
+            return;
           } else {
             console.log("Supabase Auth sign up succeeded:", signUpData);
             if (signUpData?.user) {
@@ -938,8 +939,9 @@ export default function App() {
           });
 
           if (signInError) {
-            console.warn("Supabase signin failed, bypassing via sandbox fallback:", signInError.message);
-            addToast(`Authentication Bypass: ${signInError.message}. Logging in via Sandbox Mode.`, "INFO");
+            console.error("Supabase signin failed:", signInError.message);
+            addToast("Invalid credentials: The email or password entered is incorrect.", "ERROR");
+            return;
           } else {
             console.log("Supabase Auth sign in succeeded:", signInData);
             if (signInData?.user) {
@@ -958,13 +960,21 @@ export default function App() {
             email: authEmail.trim(),
             name: authName.trim() || authEmail.split('@')[0].toUpperCase(),
             uid: userUid,
-            phone: authPhone.trim()
+            phone: authPhone.trim(),
+            mode: authMode
           })
         });
 
         if (resp.ok) {
           synced = await resp.json();
         } else {
+          try {
+            const errData = await resp.json();
+            if (errData && errData.error) {
+              addToast(errData.error, "ERROR");
+              return;
+            }
+          } catch (e) {}
           console.warn("Backend authentication API returned error status, using client fallback.");
         }
       } catch (err) {
@@ -973,6 +983,18 @@ export default function App() {
 
       // If backend sync is unavailable (e.g. Netlify or client static CDN), perform pure-frontend auth session setup
       if (!synced) {
+        if (authMode === 'LOGIN') {
+          const emailLower = authEmail.trim().toLowerCase();
+          const isAdmin = emailLower === "mutwirib964@gmail.com";
+          const isTestUser = emailLower === "trader@netacoin.com";
+          const savedBackupStr = localStorage.getItem(`vfx_backup_${emailLower}`);
+          
+          if (!isAdmin && !isTestUser && !savedBackupStr) {
+            addToast("Invalid credentials: The account has not been created under this email. Please register first.", "ERROR");
+            return;
+          }
+        }
+
         const emailLower = authEmail.trim().toLowerCase();
         const isAdmin = emailLower === "mutwirib964@gmail.com";
         synced = {
